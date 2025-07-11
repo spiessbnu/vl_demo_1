@@ -26,30 +26,14 @@ def log_to_terminal(message):
     st.session_state.log_messages.append(message)
     logging.info(message)
 
-# --- FUNÇÃO DE CORREÇÃO DE LATEX (VERSÃO 2.0 - MAIS INTELIGENTE) ---
 def corrigir_notacao_latex(texto: str) -> str:
-    """
-    Encontra qualquer bloco de texto que contenha comandos LaTeX, remove
-    quaisquer delimitadores '$' inconsistentes ao redor dele e, em seguida,
-    envolve o conteúdo limpo com '$$...$$' para uma exibição em bloco correta.
-    """
-    # Padrão para encontrar conteúdo que parece LaTeX (contém um '\' seguido de letras)
-    # e que pode ou não estar (mal) envolvido por '$' ou '$$'.
     pattern = r'\${0,2}(.*?\\(?:frac|cdot|sqrt|sum|pi|alpha|beta|[a-zA-Z]+\^\{?[0-9]\}?|times|div|neq|leq|geq).*?)\${0,2}'
-
     def normalizar_bloco(match):
-        # Pega o conteúdo interno do bloco encontrado
         conteudo = match.group(1)
-        # Remove quaisquer '$' do início ou do fim do conteúdo capturado
         conteudo_limpo = conteudo.strip().strip('$')
-        # Retorna o conteúdo limpo, agora corretamente formatado como um bloco matemático
         return f"$$\n{conteudo_limpo}\n$$"
-
-    # Usa re.sub com a função de callback para substituir todos os blocos encontrados
     texto_corrigido = re.sub(pattern, normalizar_bloco, texto)
-    
     return texto_corrigido
-
 
 @st.cache_data
 def carregar_dados():
@@ -146,15 +130,16 @@ if prompt := st.chat_input("O que vamos estudar hoje?"):
                 log_to_terminal(f"Índice: {contexto_row.name}, Ano: {contexto_row['Ano']}, Score: {contexto_row['similaridade']:.4f}")
                 log_to_terminal("---------------------------------------\n" + contexto_curricular + "\n---------------------------------------\n")
 
-                # --- PROMPT DO SISTEMA REFORÇADO ---
+                # --- PROMPT DO SISTEMA CORRIGIDO ---
+                # As chaves dentro dos exemplos de LaTeX foram duplicadas para {{ }}
                 system_prompt = f"""
                 Você é um tutor de matemática amigável e didático para um aluno do {st.session_state.aluno_ano}º ano.
                 Baseie sua resposta no CONTEXTO CURRICULAR fornecido.
                 
                 REGRAS RÍGIDAS DE FORMATAÇÃO MATEMÁTICA:
-                1.  Para fórmulas em bloco ou equações importantes, use SEMPRE dois cifrões no início e no fim. Exemplo: $$\\frac{{a}}{{b}} + \\frac{{c}}{{d}} = \\frac{{ad+bc}}{{bd}}$$
+                1.  Para fórmulas em bloco ou equações importantes, use SEMPRE dois cifrões no início e no fim. Exemplo: $$\\frac{{ad+bc}}{{bd}}$$
                 2.  Para pequenas variáveis ou frações no meio de uma frase, use um único cifrão. Exemplo: A variável $x$ é igual a $\\frac{{1}}{{2}}$.
-                3.  NUNCA misture os formatos, como `$$\frac{a}{b}$` ou `$\frac{a}{b}$$`.
+                3.  NUNCA misture os formatos, como `$$\\frac{{a}}{{b}}$` ou `$\\frac{{a}}{{b}}$$`.
 
                 CONTEXTO CURRICULAR:
                 {contexto_curricular}
@@ -175,7 +160,6 @@ if prompt := st.chat_input("O que vamos estudar hoje?"):
                         resposta_completa += (chunk.choices[0].delta.content or "")
                         placeholder.markdown(resposta_completa + "▌")
                     
-                    # Usa a nova função para limpar e formatar a resposta
                     resposta_corrigida = corrigir_notacao_latex(resposta_completa)
                     placeholder.markdown(resposta_corrigida)
                     
