@@ -8,7 +8,7 @@ import re
 
 # --- Configuração da Página e Logger ---
 st.set_page_config(
-    page_title="Tutor de Matemática",
+    page_title="VL demo 1 - Matemática",
     page_icon="🤖",
     layout="centered"
 )
@@ -90,7 +90,7 @@ df, matriz_embeddings = carregar_dados()
 if df is None:
     st.stop()
 
-st.title("🤖 Tutor Inteligente de Matemática")
+st.title("🤖 VL demo 1 - Matemática")
 st.caption("Um assistente baseado no currículo de SC para te ajudar a estudar.")
 
 with st.sidebar:
@@ -136,6 +136,7 @@ if prompt := st.chat_input("O que vamos estudar hoje?"):
                 log_to_terminal(f"Índice: {contexto_row.name}")
                 log_to_terminal(f"Ano: {contexto_row['Ano']}")
                 log_to_terminal(f"Unidade: {contexto_row['Unidade Temática']}")
+                log_to_terminal(f"Conteúdo: {contexto_row['texto_completo']}")
                 log_to_terminal(f"Score: {contexto_row['similaridade']:.4f}")
                 log_to_terminal("---------------------------------------")
                 log_to_terminal(contexto_curricular)
