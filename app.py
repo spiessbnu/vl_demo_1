@@ -8,7 +8,7 @@ import json
 import re
 
 # --- Configuração da Página e Logger ---
-st.set_page_config(page_title="Tutor de Matemática", page_icon="🤖", layout="centered")
+st.set_page_config(page_title="VL demo 1 - Matemática", page_icon="🤖", layout="centered")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 
 # --- INICIALIZAÇÃO DO SESSION STATE ---
@@ -86,7 +86,7 @@ except (KeyError, FileNotFoundError):
 df, matriz_embeddings = carregar_dados()
 if df is None: st.stop()
 
-st.title("🤖 Tutor Inteligente de Matemática")
+st.title("🤖 VL demo 1 - Matemática")
 st.caption("Um assistente baseado no currículo de SC para te ajudar a estudar.")
 
 with st.sidebar:
