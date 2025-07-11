@@ -186,6 +186,8 @@ elif st.session_state.app_state == "CHAT":
     if st.button("⬅️ Mudar de Tópico"):
         st.session_state.messages = []
         st.session_state.app_state = "SELECAO_TOPICO"
+        # Limpa o dataframe com similaridades para forçar um novo cálculo se o assunto mudar
+        st.session_state.df_com_similaridade = None
         st.rerun()
 
     # Exibe o histórico da conversa
@@ -207,14 +209,28 @@ elif st.session_state.app_state == "CHAT":
                 topico_atual_texto = df.loc[st.session_state.topico_selecionado_idx, 'texto_completo']
                 query_para_rag = criar_query_contextualizada(st.session_state.messages, topico_atual_texto)
                 
+                # --- SYSTEM PROMPT COMPLETO E CORRETO ---
                 system_prompt = f"""
-                Você é um tutor de matemática... (prompt omitido por brevidade) ...
+                Você é um tutor de matemática. Sua resposta DEVE ser um objeto JSON válido com uma chave "response" contendo uma lista de strings.
+                Use Markdown e LaTeX (com $...$) para formatar o texto dentro das strings.
+
+                Exemplo de resposta JSON válida:
+                {{
+                  "response": [
+                    "A fórmula de Bhaskara é usada para resolver equações de segundo grau.",
+                    "A fórmula é: $$\\Delta = b^2 - 4ac$$",
+                    "- Onde $a$, $b$, e $c$ são os coeficientes da equação.",
+                    "- O valor de $x$ é encontrado com $x = \\frac{{-b \\pm \\sqrt{{\\Delta}}}}{{2a}}$."
+                  ]
+                }}
+
                 O aluno está estudando o tópico: "{df.loc[st.session_state.topico_selecionado_idx, 'Objetos do conhecimento']}".
-                Use o CONTEXTO CURRICULAR abaixo para responder a pergunta dele.
+                Use o CONTEXTO CURRICULAR abaixo para responder a pergunta dele, seguindo ESTRITAMENTE o formato JSON.
                 CONTEXTO CURRICULAR: {topico_atual_texto}
                 """
                 mensagens_para_api = [{"role": "system", "content": system_prompt}] + st.session_state.messages
                 
+                log_to_terminal("Enviando requisição para API (modo JSON)...")
                 try:
                     response = client.chat.completions.create(
                         model="gpt-4o-mini", messages=mensagens_para_api,
