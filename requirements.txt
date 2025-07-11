@@ -4,4 +4,3 @@ numpy
 openai
 pyarrow
 scikit-learn
-re
