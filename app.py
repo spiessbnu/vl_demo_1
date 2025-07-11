@@ -21,7 +21,6 @@ if "aluno_ano" not in st.session_state:
     st.session_state.aluno_ano = None
 if "aluno_nome" not in st.session_state:
     st.session_state.aluno_nome = ""
-# Nova variável para guardar o dataframe com scores de similaridade
 if "df_com_similaridade" not in st.session_state:
     st.session_state.df_com_similaridade = None
 if "topico_selecionado_idx" not in st.session_state:
@@ -61,7 +60,6 @@ def gerar_embedding_query(texto, client):
         st.error(f"Erro ao gerar embedding: {e}")
         return None
 
-# FUNÇÃO MODIFICADA: Agora calcula e retorna o DataFrame completo com os scores
 def calcular_similaridades_iniciais(query, df, matriz_embeddings, client):
     if not query: return None
     log_to_terminal("Calculando similaridades para a busca inicial...")
@@ -137,7 +135,6 @@ if st.session_state.app_state == "COLETA_INFO":
             st.session_state.aluno_ano = dados_iniciais.get("ano", 8)
             assunto = dados_iniciais.get("assunto", prompt)
 
-            # Calcula todas as similaridades e guarda no session_state
             df_com_similaridade = calcular_similaridades_iniciais(assunto, df, matriz_embeddings, client)
             if df_com_similaridade is not None:
                 st.session_state.df_com_similaridade = df_com_similaridade
@@ -148,16 +145,14 @@ if st.session_state.app_state == "COLETA_INFO":
         else:
             st.error("Desculpe, não consegui entender sua mensagem. Por favor, tente o formato do exemplo.")
 
-# ESTADO 2: SELEÇÃO DE TÓPICO (NOVA LÓGICA)
+# ESTADO 2: SELEÇÃO DE TÓPICO
 elif st.session_state.app_state == "SELECAO_TOPICO":
     st.markdown(f"### Olá, {st.session_state.aluno_nome}!")
     st.markdown(f"Com base no que você pediu, encontrei estes tópicos do **{st.session_state.aluno_ano}º ano**, ordenados por relevância. Qual deles você gostaria de estudar?")
 
-    # Filtra o DataFrame pelo ano do aluno e ordena pela similaridade calculada no passo anterior
     df_filtrado = st.session_state.df_com_similaridade
     playlist_df = df_filtrado[df_filtrado["Ano"] == st.session_state.aluno_ano].sort_values("similaridade", ascending=False)
     
-    # O melhor resultado é o primeiro da lista
     top_hit_idx = playlist_df.index[0] if not playlist_df.empty else None
 
     if top_hit_idx is None:
@@ -166,7 +161,7 @@ elif st.session_state.app_state == "SELECAO_TOPICO":
             st.session_state.app_state = "COLETA_INFO"
             st.rerun()
     else:
-        for idx, row in playlist_df.head(5).iterrows(): # Mostra os top 5 mais relevantes
+        for idx, row in playlist_df.head(5).iterrows():
             with st.container(border=True):
                 col1, col2 = st.columns([4, 1])
                 with col1:
@@ -185,33 +180,25 @@ elif st.session_state.app_state == "SELECAO_TOPICO":
                         ]
                         st.rerun()
 
-# ESTADO 3: CHAT
+# ESTADO 3: CHAT (LÓGICA UNIFICADA E CORRIGIDA)
 elif st.session_state.app_state == "CHAT":
+    # Botão para voltar para a seleção de tópicos
+    if st.button("⬅️ Mudar de Tópico"):
+        st.session_state.messages = []
+        st.session_state.app_state = "SELECAO_TOPICO"
+        st.rerun()
+
+    # Exibe o histórico da conversa
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             renderizar_mensagem(message)
     
+    # Caixa de input ÚNICA para o chat
     if prompt := st.chat_input("Peça uma explicação, exemplos ou exercícios!"):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        with st.chat_message("assistant"):
-            with st.spinner("Pensando..."):
-                # (A lógica interna do chat permanece a mesma da versão anterior)
-                # ...
-                pass # A lógica completa do chat vai aqui
-
-# --- Bloco final para o Estado de CHAT ---
-if st.session_state.app_state == "CHAT":
-    # Adicionamos um botão para o caso de o aluno querer voltar e escolher outro tópico
-    if st.button(" Mudar de Tópico"):
-        # Limpa o histórico de chat e volta para a tela de seleção
-        st.session_state.messages = []
-        st.session_state.app_state = "SELECAO_TOPICO"
-        st.rerun()
-
-    if prompt := st.session_state.get('last_prompt'): # Processa o input que já foi capturado
         with st.chat_message("assistant"):
             with st.spinner("Pensando..."):
                 st.session_state.log_messages = []
@@ -234,19 +221,13 @@ if st.session_state.app_state == "CHAT":
                         response_format={"type": "json_object"}
                     )
                     resposta_json_str = response.choices[0].message.content
+                    log_to_terminal("\n--- RESPOSTA BRUTA DA API (JSON) ---")
+                    log_to_terminal(resposta_json_str)
                     st.session_state.messages.append({"role": "assistant", "content": resposta_json_str})
                 except Exception as e:
                     st.error(f"Ocorreu um erro com a API da OpenAI: {e}")
                     log_to_terminal(f"ERRO na API de Chat: {e}")
-        del st.session_state['last_prompt'] # Limpa o prompt para evitar reprocessamento
         st.rerun()
-
-    # Captura novo input
-    if prompt := st.chat_input("Peça uma explicação, exemplos ou exercícios!"):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        st.session_state['last_prompt'] = prompt # Guarda o prompt para ser processado no rerun
-        st.rerun()
-
 
 # --- 5. SIDEBAR (SEMPRE VISÍVEL) ---
 with st.sidebar:
