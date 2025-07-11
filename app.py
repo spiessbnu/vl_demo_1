@@ -8,7 +8,7 @@ import re
 
 # --- Configuração da Página e Logger ---
 st.set_page_config(
-    page_title="VL demo 1 - Matemática",
+    page_title="Tutor de Matemática",
     page_icon="🤖",
     layout="centered"
 )
@@ -26,18 +26,30 @@ def log_to_terminal(message):
     st.session_state.log_messages.append(message)
     logging.info(message)
 
+# --- FUNÇÃO DE CORREÇÃO DE LATEX (VERSÃO 2.0 - MAIS INTELIGENTE) ---
 def corrigir_notacao_latex(texto: str) -> str:
-    padroes = [
-        r"(?<!\$)\\frac\{[^\}]+\}\{[^\}]+\}",
-        r"(?<!\$)\\sqrt\{[^\}]+\}",
-        r"(?<!\$)\\sum_\{[^\}]+\}\^\{[^\}]+\}",
-        r"(?<!\$)[a-zA-Z]\^[0-9]+",
-    ]
-    def adicionar_cifroes(match):
-        return f"${match.group(0)}$"
-    for padrao in padroes:
-        texto = re.sub(padrao, adicionar_cifroes, texto)
-    return texto
+    """
+    Encontra qualquer bloco de texto que contenha comandos LaTeX, remove
+    quaisquer delimitadores '$' inconsistentes ao redor dele e, em seguida,
+    envolve o conteúdo limpo com '$$...$$' para uma exibição em bloco correta.
+    """
+    # Padrão para encontrar conteúdo que parece LaTeX (contém um '\' seguido de letras)
+    # e que pode ou não estar (mal) envolvido por '$' ou '$$'.
+    pattern = r'\${0,2}(.*?\\(?:frac|cdot|sqrt|sum|pi|alpha|beta|[a-zA-Z]+\^\{?[0-9]\}?|times|div|neq|leq|geq).*?)\${0,2}'
+
+    def normalizar_bloco(match):
+        # Pega o conteúdo interno do bloco encontrado
+        conteudo = match.group(1)
+        # Remove quaisquer '$' do início ou do fim do conteúdo capturado
+        conteudo_limpo = conteudo.strip().strip('$')
+        # Retorna o conteúdo limpo, agora corretamente formatado como um bloco matemático
+        return f"$$\n{conteudo_limpo}\n$$"
+
+    # Usa re.sub com a função de callback para substituir todos os blocos encontrados
+    texto_corrigido = re.sub(pattern, normalizar_bloco, texto)
+    
+    return texto_corrigido
+
 
 @st.cache_data
 def carregar_dados():
@@ -59,7 +71,6 @@ def gerar_embedding_query(texto, client):
         return response.data[0].embedding
     except Exception as e:
         st.error(f"Erro ao gerar embedding: {e}")
-        log_to_terminal(f"ERRO na API de Embeddings: {e}")
         return None
 
 def buscar_conteudo_relevante(query_embedding, df, matriz_embeddings, ano_aluno, top_k=5):
@@ -90,7 +101,7 @@ df, matriz_embeddings = carregar_dados()
 if df is None:
     st.stop()
 
-st.title("🤖 VL demo 1 - Matemática")
+st.title("🤖 Tutor Inteligente de Matemática")
 st.caption("Um assistente baseado no currículo de SC para te ajudar a estudar.")
 
 with st.sidebar:
@@ -131,26 +142,19 @@ if prompt := st.chat_input("O que vamos estudar hoje?"):
                 contexto_row = df_contexto.iloc[0]
                 contexto_curricular = contexto_row['texto_completo']
 
-                # --- LOG DETALHADO DO CONTEXTO (NOVA SEÇÃO) ---
                 log_to_terminal("\n--- CONTEXTO SELECIONADO PARA O LLM ---")
-                log_to_terminal(f"Índice: {contexto_row.name}")
-                log_to_terminal(f"Ano: {contexto_row['Ano']}")
-                log_to_terminal(f"Unidade: {contexto_row['Unidade Temática']}")
-                log_to_terminal(f"Conteúdo: {contexto_row['texto_completo']}")
-                log_to_terminal(f"Score: {contexto_row['similaridade']:.4f}")
-                log_to_terminal("---------------------------------------")
-                log_to_terminal(contexto_curricular)
-                log_to_terminal("---------------------------------------\n")
-                # --- FIM DA NOVA SEÇÃO ---
+                log_to_terminal(f"Índice: {contexto_row.name}, Ano: {contexto_row['Ano']}, Score: {contexto_row['similaridade']:.4f}")
+                log_to_terminal("---------------------------------------\n" + contexto_curricular + "\n---------------------------------------\n")
 
+                # --- PROMPT DO SISTEMA REFORÇADO ---
                 system_prompt = f"""
-                Você é um tutor de matemática amigável, paciente e didático.
-                Sua missão é ajudar um aluno do {st.session_state.aluno_ano}º ano.
-                Use o seguinte CONTEXTO CURRICULAR para basear sua resposta. Não invente informações.
-                Seja claro, use exemplos simples e sempre responda em português do Brasil.
-
-                IMPORTANTE: Sempre que você escrever notação matemática, como frações, raízes ou equações, coloque-a entre cifrões ($).
-                Por exemplo, para a fração 3/4, escreva: $\\frac{{3}}{{4}}$. Para uma equação, escreva: $x^2 + y^2 = z^2$.
+                Você é um tutor de matemática amigável e didático para um aluno do {st.session_state.aluno_ano}º ano.
+                Baseie sua resposta no CONTEXTO CURRICULAR fornecido.
+                
+                REGRAS RÍGIDAS DE FORMATAÇÃO MATEMÁTICA:
+                1.  Para fórmulas em bloco ou equações importantes, use SEMPRE dois cifrões no início e no fim. Exemplo: $$\\frac{{a}}{{b}} + \\frac{{c}}{{d}} = \\frac{{ad+bc}}{{bd}}$$
+                2.  Para pequenas variáveis ou frações no meio de uma frase, use um único cifrão. Exemplo: A variável $x$ é igual a $\\frac{{1}}{{2}}$.
+                3.  NUNCA misture os formatos, como `$$\frac{a}{b}$` ou `$\frac{a}{b}$$`.
 
                 CONTEXTO CURRICULAR:
                 {contexto_curricular}
@@ -170,8 +174,11 @@ if prompt := st.chat_input("O que vamos estudar hoje?"):
                     for chunk in stream:
                         resposta_completa += (chunk.choices[0].delta.content or "")
                         placeholder.markdown(resposta_completa + "▌")
+                    
+                    # Usa a nova função para limpar e formatar a resposta
                     resposta_corrigida = corrigir_notacao_latex(resposta_completa)
                     placeholder.markdown(resposta_corrigida)
+                    
                     st.session_state.messages.append({"role": "assistant", "content": resposta_corrigida})
                     log_to_terminal("Resposta da API recebida e exibida.")
                     if resposta_completa != resposta_corrigida:
