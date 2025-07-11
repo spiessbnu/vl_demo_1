@@ -4,17 +4,14 @@ import numpy as np
 import openai
 from sklearn.metrics.pairwise import cosine_similarity
 import logging
-import re
+import json # <-- Importante para processar a resposta
 
 # --- Configuração da Página e Logger ---
-st.set_page_config(
-    page_title="Tutor de Matemática",
-    page_icon="🤖",
-    layout="centered"
-)
+st.set_page_config(page_title="Tutor de Matemática", page_icon="🤖", layout="centered")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 
 # --- INICIALIZAÇÃO DO SESSION STATE ---
+# (Sem alterações aqui)
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "log_messages" not in st.session_state:
@@ -26,34 +23,10 @@ def log_to_terminal(message):
     st.session_state.log_messages.append(message)
     logging.info(message)
 
-# --- FUNÇÃO DE CORREÇÃO DE LATEX (VERSÃO 4.0 - COM NÚMEROS MISTOS) ---
-def corrigir_notacao_latex(texto: str) -> str:
-    """Aplica uma série de correções para garantir a renderização LaTeX."""
-    texto = texto.replace('$$$', '$$')
-    texto = re.sub(r'([^\s])(\$\$)', r'\1 \2', texto)
-    texto = re.sub(r'(\$\$[^\$]+\$\$)([^\s])', r'\1 \2', texto)
-    
-    pattern_frac = r'(?<!\$)\\frac\{[^\}]+\}\{[^\}]+\}'
-    texto = re.sub(pattern_frac, lambda match: f"${match.group(0)}$", texto)
-    
-    pattern_cmd = r'(?<![\$a-zA-Z])(\\(?:sqrt|cdot|times|div|pi|alpha|beta)\{[^\}]+\})'
-    texto = re.sub(pattern_cmd, lambda match: f"${match.group(0)}$", texto)
+# A FUNÇÃO 'corrigir_notacao_latex' NÃO É MAIS NECESSÁRIA E FOI REMOVIDA!
 
-    # --- NOVA ETAPA 5: Corrigir números mistos (ex: "1$\frac{1}{4}$") ---
-    # Padrão: encontra um ou mais dígitos, seguidos imediatamente por uma fração formatada em LaTeX.
-    pattern_mistos = r'([0-9]+)\s*(\$\\frac\{[^\}]+\}\{[^\}]+\}\$)'
-    
-    def unir_numero_misto(match):
-        inteiro = match.group(1)
-        fracao_latex = match.group(2)
-        # Remove os '$' da fração interna e une tudo dentro de um novo par de '$'
-        fracao_interna = fracao_latex.strip('$')
-        return f"${inteiro}{fracao_interna}$"
-    
-    texto = re.sub(pattern_mistos, unir_numero_misto, texto)
-
-    return texto
-
+# --- Funções de Carregamento de Dados e RAG ---
+# (Sem alterações aqui)
 @st.cache_data
 def carregar_dados():
     log_to_terminal("Iniciando carregamento dos dados...")
@@ -92,6 +65,8 @@ def buscar_conteudo_relevante(query_embedding, df, matriz_embeddings, ano_aluno,
         log_to_terminal(f"- {i} | {row['Ano']}º ano | {row['similaridade']:.4f}")
     return resultados.iloc[[0]]
 
+# --- Inicialização e UI ---
+# (Sem alterações significativas aqui, apenas na parte de renderização do chat)
 try:
     client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 except (KeyError, FileNotFoundError):
@@ -121,10 +96,40 @@ with st.sidebar:
         log_text = "\n".join(st.session_state.log_messages)
         log_container.text(log_text)
 
+# --- LÓGICA DE RENDERIZAÇÃO DE MENSAGENS ATUALIZADA ---
+def renderizar_mensagem(message):
+    """Interpreta e renderiza a resposta JSON do assistente ou o texto do usuário."""
+    if message["role"] == "user":
+        st.markdown(message["content"])
+        return
+
+    # Se a mensagem do assistente for um JSON, processe-a
+    try:
+        data = json.loads(message["content"])
+        # A resposta esperada é uma lista de blocos de conteúdo
+        for block in data.get("response", []):
+            block_type = block.get("type")
+            content = block.get("content")
+            if block_type == "paragraph":
+                st.markdown(content)
+            elif block_type == "math_block":
+                # st.latex é a função ideal para blocos de matemática
+                st.latex(content)
+            elif block_type == "list":
+                # Monta uma lista em formato markdown
+                list_md = ""
+                for item in block.get("items", []):
+                    list_md += f"- {item}\n"
+                st.markdown(list_md)
+    except (json.JSONDecodeError, TypeError):
+        # Se não for um JSON válido, apenas mostre o texto (fallback)
+        st.markdown(message["content"])
+
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        st.markdown(message["content"], unsafe_allow_html=True)
+        renderizar_mensagem(message)
 
+# --- LÓGICA PRINCIPAL DO CHAT ATUALIZADA ---
 if prompt := st.chat_input("O que vamos estudar hoje?"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -146,46 +151,49 @@ if prompt := st.chat_input("O que vamos estudar hoje?"):
                 log_to_terminal(f"Índice: {contexto_row.name}, Ano: {contexto_row['Ano']}, Score: {contexto_row['similaridade']:.4f}")
                 log_to_terminal("---------------------------------------\n" + contexto_curricular + "\n---------------------------------------\n")
 
-                # --- PROMPT DO SISTEMA (VERSÃO 4.0) ---
+                # --- NOVO PROMPT FOCADO EM SAÍDA JSON ---
                 system_prompt = f"""
-                Você é um tutor de matemática amigável e didático para um aluno do {st.session_state.aluno_ano}º ano.
-                Baseie sua resposta no CONTEXTO CURRICULAR fornecido.
-                
-                REGRAS RÍGIDAS DE FORMATAÇÃO:
-                1.  Blocos matemáticos devem estar em linhas separadas e entre dois cifrões ($$).
-                2.  Fórmulas ou variáveis no meio do texto devem estar entre um cifrão ($).
-                3.  NUNCA misture os formatos.
-                4.  SEMPRE adicione um espaço antes e depois de qualquer bloco matemático.
-                5.  Para números mistos, inclua o número inteiro DENTRO dos cifrões. Exemplo CORRETO: `$1\\frac{{1}}{{4}}$`. Exemplo ERRADO: `1$\\frac{{1}}{{4}}$`.
+                Você é um tutor de matemática. Sua resposta DEVE ser um objeto JSON válido.
+                A estrutura do JSON é uma lista de blocos de conteúdo chamada "response".
+                Os tipos de blocos disponíveis são: "paragraph", "math_block", e "list".
 
-                CONTEXTO CURRICULAR:
-                {contexto_curricular}
+                - "paragraph": para texto explicativo. O conteúdo é uma string. Pode conter LaTeX inline usando um cifrão (ex: $x=1$).
+                - "math_block": para equações ou fórmulas importantes. O conteúdo é uma string contendo APENAS o código LaTeX, sem cifrões.
+                - "list": para listas de itens. O conteúdo deve ser um array de strings chamado "items".
+
+                Exemplo de resposta JSON válida:
+                {{
+                  "response": [
+                    {{ "type": "paragraph", "content": "Para somar as frações $\\frac{{1}}{{2}}$ e $\\frac{{1}}{{3}}$, primeiro encontramos o MMC." }},
+                    {{ "type": "math_block", "content": "\\frac{{1}}{{2}} + \\frac{{1}}{{3}} = \\frac{{3+2}}{{6}} = \\frac{{5}}{{6}}" }},
+                    {{ "type": "list", "items": ["O numerador é 5.", "O denominador é 6."] }}
+                  ]
+                }}
+
+                Agora, usando o CONTEXTO CURRICULAR abaixo, responda à pergunta do aluno do {st.session_state.aluno_ano}º ano seguindo ESTRITAMENTE o formato JSON.
+                CONTEXTO CURRICULAR: {contexto_curricular}
                 """
-                mensagens_para_api = [{"role": "system", "content": system_prompt}]
-                for msg in st.session_state.messages:
-                    mensagens_para_api.append(msg)
-                log_to_terminal("Enviando requisição para a API 'gpt-4o-mini'...")
+                mensagens_para_api = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
+                
+                log_to_terminal("Enviando requisição para API (modo JSON)...")
                 try:
-                    stream = client.chat.completions.create(
+                    # Não usaremos mais streaming, pois esperamos um objeto JSON completo
+                    response = client.chat.completions.create(
                         model="gpt-4o-mini",
                         messages=mensagens_para_api,
-                        stream=True,
+                        response_format={"type": "json_object"} # <-- Força a saída em JSON
                     )
                     
-                    resposta_completa = st.write_stream(stream)
-                    
-                    resposta_corrigida = corrigir_notacao_latex(resposta_completa)
-                    
-                    st.session_state.messages.append({"role": "assistant", "content": resposta_corrigida})
-                    log_to_terminal("Resposta da API recebida.")
-                    if resposta_completa != resposta_corrigida:
-                        log_to_terminal("Notação LaTeX foi corrigida programaticamente.")
+                    resposta_json_str = response.choices[0].message.content
+                    st.session_state.messages.append({"role": "assistant", "content": resposta_json_str})
+                    log_to_terminal("Resposta JSON da API recebida.")
 
                 except Exception as e:
                     st.error(f"Ocorreu um erro com a API da OpenAI: {e}")
                     log_to_terminal(f"ERRO na API de Chat: {e}")
             else:
-                st.write("Não consegui encontrar um conteúdo diretamente relacionado no currículo. Você pode tentar reformular a pergunta?")
+                fallback_msg = {"response": [{"type": "paragraph", "content": "Não consegui encontrar um conteúdo diretamente relacionado no currículo. Você pode tentar reformular a pergunta?"}]}
+                st.session_state.messages.append({"role": "assistant", "content": json.dumps(fallback_msg)})
                 log_to_terminal("Nenhum contexto relevante encontrado.")
     
     st.rerun()
