@@ -4,14 +4,14 @@ import numpy as np
 import openai
 from sklearn.metrics.pairwise import cosine_similarity
 import logging
-import json # <-- Importante para processar a resposta
+import json
+import re
 
 # --- Configuração da Página e Logger ---
 st.set_page_config(page_title="Tutor de Matemática", page_icon="🤖", layout="centered")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 
 # --- INICIALIZAÇÃO DO SESSION STATE ---
-# (Sem alterações aqui)
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "log_messages" not in st.session_state:
@@ -23,10 +23,20 @@ def log_to_terminal(message):
     st.session_state.log_messages.append(message)
     logging.info(message)
 
-# A FUNÇÃO 'corrigir_notacao_latex' NÃO É MAIS NECESSÁRIA E FOI REMOVIDA!
+# --- NOVA FUNÇÃO DE CORREÇÃO LEVE ---
+def corrigir_latex_inline(texto: str) -> str:
+    """
+    Encontra comandos LaTeX comuns, como \\frac, que não estão delimitados
+    por '$' e os envolve para renderização inline correta.
+    """
+    # Padrão: Encontra '\frac{...}{...}' que NÃO é precedido nem seguido por um '$'.
+    # Usa "negative lookarounds" para não corrigir o que já está certo.
+    pattern = r'(?<!\$)\\frac\{[^\}]+\}\{[^\}]+\}(?!\$)'
+    
+    # A substituição simplesmente envolve o padrão encontrado com '$'
+    return re.sub(pattern, lambda match: f"${match.group(0)}$", texto)
 
-# --- Funções de Carregamento de Dados e RAG ---
-# (Sem alterações aqui)
+# --- Funções de Carregamento de Dados e RAG (sem alterações) ---
 @st.cache_data
 def carregar_dados():
     log_to_terminal("Iniciando carregamento dos dados...")
@@ -66,7 +76,6 @@ def buscar_conteudo_relevante(query_embedding, df, matriz_embeddings, ano_aluno,
     return resultados.iloc[[0]]
 
 # --- Inicialização e UI ---
-# (Sem alterações significativas aqui, apenas na parte de renderização do chat)
 try:
     client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 except (KeyError, FileNotFoundError):
@@ -98,38 +107,34 @@ with st.sidebar:
 
 # --- LÓGICA DE RENDERIZAÇÃO DE MENSAGENS ATUALIZADA ---
 def renderizar_mensagem(message):
-    """Interpreta e renderiza a resposta JSON do assistente ou o texto do usuário."""
     if message["role"] == "user":
         st.markdown(message["content"])
         return
 
-    # Se a mensagem do assistente for um JSON, processe-a
     try:
         data = json.loads(message["content"])
-        # A resposta esperada é uma lista de blocos de conteúdo
         for block in data.get("response", []):
             block_type = block.get("type")
             content = block.get("content")
             if block_type == "paragraph":
-                st.markdown(content)
+                # APLICA A CORREÇÃO INLINE ANTES DE RENDERIZAR
+                st.markdown(corrigir_latex_inline(content))
             elif block_type == "math_block":
-                # st.latex é a função ideal para blocos de matemática
                 st.latex(content)
             elif block_type == "list":
-                # Monta uma lista em formato markdown
                 list_md = ""
                 for item in block.get("items", []):
-                    list_md += f"- {item}\n"
+                    # Também aplica a correção para o caso de ter LaTeX em um item de lista
+                    list_md += f"- {corrigir_latex_inline(item)}\n"
                 st.markdown(list_md)
     except (json.JSONDecodeError, TypeError):
-        # Se não for um JSON válido, apenas mostre o texto (fallback)
         st.markdown(message["content"])
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         renderizar_mensagem(message)
 
-# --- LÓGICA PRINCIPAL DO CHAT ATUALIZADA ---
+# --- LÓGICA PRINCIPAL DO CHAT (SEM ALTERAÇÕES) ---
 if prompt := st.chat_input("O que vamos estudar hoje?"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -151,7 +156,6 @@ if prompt := st.chat_input("O que vamos estudar hoje?"):
                 log_to_terminal(f"Índice: {contexto_row.name}, Ano: {contexto_row['Ano']}, Score: {contexto_row['similaridade']:.4f}")
                 log_to_terminal("---------------------------------------\n" + contexto_curricular + "\n---------------------------------------\n")
 
-                # --- NOVO PROMPT FOCADO EM SAÍDA JSON ---
                 system_prompt = f"""
                 Você é um tutor de matemática. Sua resposta DEVE ser um objeto JSON válido.
                 A estrutura do JSON é uma lista de blocos de conteúdo chamada "response".
@@ -177,11 +181,10 @@ if prompt := st.chat_input("O que vamos estudar hoje?"):
                 
                 log_to_terminal("Enviando requisição para API (modo JSON)...")
                 try:
-                    # Não usaremos mais streaming, pois esperamos um objeto JSON completo
                     response = client.chat.completions.create(
                         model="gpt-4o-mini",
                         messages=mensagens_para_api,
-                        response_format={"type": "json_object"} # <-- Força a saída em JSON
+                        response_format={"type": "json_object"}
                     )
                     
                     resposta_json_str = response.choices[0].message.content
