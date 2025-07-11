@@ -26,29 +26,33 @@ def log_to_terminal(message):
     st.session_state.log_messages.append(message)
     logging.info(message)
 
-# --- FUNÇÃO DE CORREÇÃO DE LATEX (VERSÃO 3.0 - CIRÚRGICA) ---
+# --- FUNÇÃO DE CORREÇÃO DE LATEX (VERSÃO 4.0 - COM NÚMEROS MISTOS) ---
 def corrigir_notacao_latex(texto: str) -> str:
     """Aplica uma série de correções para garantir a renderização LaTeX."""
-
-    # Etapa 1: Normalizar delimitadores inconsistentes (ex: $$...$$$)
     texto = texto.replace('$$$', '$$')
-
-    # Etapa 2: Garantir espaço antes e depois de blocos $$
-    # Isso ajuda a evitar textos colados como "palavra$$\frac{a}{b}$$outra"
-    texto = re.sub(r'([^\s])(\$\$)', r'\1 \2', texto) # Adiciona espaço antes de $$
-    texto = re.sub(r'(\$\$[^\$]+\$\$)([^\s])', r'\1 \2', texto) # Adiciona espaço depois de $$
-
-    # Etapa 3: Corrigir frações que não foram delimitadas
-    # Padrão: Encontra '\frac{...}{...}' que NÃO é precedido por um '$'
+    texto = re.sub(r'([^\s])(\$\$)', r'\1 \2', texto)
+    texto = re.sub(r'(\$\$[^\$]+\$\$)([^\s])', r'\1 \2', texto)
+    
     pattern_frac = r'(?<!\$)\\frac\{[^\}]+\}\{[^\}]+\}'
     texto = re.sub(pattern_frac, lambda match: f"${match.group(0)}$", texto)
-
-    # Etapa 4 (Opcional, mas útil): Corrigir outros comandos comuns sem delimitador
+    
     pattern_cmd = r'(?<![\$a-zA-Z])(\\(?:sqrt|cdot|times|div|pi|alpha|beta)\{[^\}]+\})'
     texto = re.sub(pattern_cmd, lambda match: f"${match.group(0)}$", texto)
 
-    return texto
+    # --- NOVA ETAPA 5: Corrigir números mistos (ex: "1$\frac{1}{4}$") ---
+    # Padrão: encontra um ou mais dígitos, seguidos imediatamente por uma fração formatada em LaTeX.
+    pattern_mistos = r'([0-9]+)\s*(\$\\frac\{[^\}]+\}\{[^\}]+\}\$)'
+    
+    def unir_numero_misto(match):
+        inteiro = match.group(1)
+        fracao_latex = match.group(2)
+        # Remove os '$' da fração interna e une tudo dentro de um novo par de '$'
+        fracao_interna = fracao_latex.strip('$')
+        return f"${inteiro}{fracao_interna}$"
+    
+    texto = re.sub(pattern_mistos, unir_numero_misto, texto)
 
+    return texto
 
 @st.cache_data
 def carregar_dados():
@@ -119,7 +123,6 @@ with st.sidebar:
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        # A renderização do histórico usa st.markdown, que lida bem com strings que já estão corretas
         st.markdown(message["content"], unsafe_allow_html=True)
 
 if prompt := st.chat_input("O que vamos estudar hoje?"):
@@ -143,16 +146,17 @@ if prompt := st.chat_input("O que vamos estudar hoje?"):
                 log_to_terminal(f"Índice: {contexto_row.name}, Ano: {contexto_row['Ano']}, Score: {contexto_row['similaridade']:.4f}")
                 log_to_terminal("---------------------------------------\n" + contexto_curricular + "\n---------------------------------------\n")
 
-                # --- PROMPT DO SISTEMA (VERSÃO 3.0) ---
+                # --- PROMPT DO SISTEMA (VERSÃO 4.0) ---
                 system_prompt = f"""
                 Você é um tutor de matemática amigável e didático para um aluno do {st.session_state.aluno_ano}º ano.
                 Baseie sua resposta no CONTEXTO CURRICULAR fornecido.
                 
                 REGRAS RÍGIDAS DE FORMATAÇÃO:
-                1.  Blocos matemáticos (equações, frações grandes) devem estar em linhas separadas e entre dois cifrões ($$).
-                2.  Fórmulas ou variáveis pequenas no meio do texto devem estar entre um cifrão ($).
+                1.  Blocos matemáticos devem estar em linhas separadas e entre dois cifrões ($$).
+                2.  Fórmulas ou variáveis no meio do texto devem estar entre um cifrão ($).
                 3.  NUNCA misture os formatos.
-                4.  SEMPRE adicione um espaço antes e depois de qualquer bloco matemático ($ ou $$) para não colar com o texto. Exemplo CORRETO: `O resultado é $$\frac{{a}}{{b}}$$.` Exemplo ERRADO: `O resultado é$$\frac{{a}}{{b}}$$.`
+                4.  SEMPRE adicione um espaço antes e depois de qualquer bloco matemático.
+                5.  Para números mistos, inclua o número inteiro DENTRO dos cifrões. Exemplo CORRETO: `$1\\frac{{1}}{{4}}$`. Exemplo ERRADO: `1$\\frac{{1}}{{4}}$`.
 
                 CONTEXTO CURRICULAR:
                 {contexto_curricular}
@@ -168,13 +172,8 @@ if prompt := st.chat_input("O que vamos estudar hoje?"):
                         stream=True,
                     )
                     
-                    # --- LÓGICA DE RENDERIZAÇÃO SEGURA ---
-                    # Para evitar o problema de "escape" do Python, escrevemos o stream
-                    # em um placeholder, mas a versão final corrigida é salva no histórico
-                    # e exibida corretamente no st.markdown() após o loop.
                     resposta_completa = st.write_stream(stream)
                     
-                    # Usa a nova função cirúrgica para limpar e formatar a resposta
                     resposta_corrigida = corrigir_notacao_latex(resposta_completa)
                     
                     st.session_state.messages.append({"role": "assistant", "content": resposta_corrigida})
@@ -189,5 +188,4 @@ if prompt := st.chat_input("O que vamos estudar hoje?"):
                 st.write("Não consegui encontrar um conteúdo diretamente relacionado no currículo. Você pode tentar reformular a pergunta?")
                 log_to_terminal("Nenhum contexto relevante encontrado.")
     
-    # Recarrega a página para exibir a mensagem do assistente que foi adicionada ao histórico
     st.rerun()
