@@ -4,6 +4,7 @@ import numpy as np
 import openai
 from sklearn.metrics.pairwise import cosine_similarity
 import logging
+import re # <-- 1. IMPORTAÇÃO ADICIONADA
 
 # --- Configuração da Página e Logger ---
 st.set_page_config(
@@ -13,25 +14,47 @@ st.set_page_config(
 )
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 
-# --- INICIALIZAÇÃO DO SESSION STATE (MOVIDO PARA CIMA) ---
-# Este bloco agora executa antes de qualquer outra coisa, garantindo que as chaves existam.
+# --- INICIALIZAÇÃO DO SESSION STATE ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "log_messages" not in st.session_state:
     st.session_state.log_messages = []
 if "aluno_ano" not in st.session_state:
-    st.session_state.aluno_ano = 5 # Definimos um padrão inicial
+    st.session_state.aluno_ano = 5
 
 def log_to_terminal(message):
-    """Função para adicionar logs ao nosso terminal na UI."""
     st.session_state.log_messages.append(message)
     logging.info(message)
+
+# --- FUNÇÃO DE CORREÇÃO DE LATEX (NOVA) ---
+def corrigir_notacao_latex(texto: str) -> str:
+    """
+    Usa expressões regulares para encontrar padrões LaTeX comuns que não estão
+    entre cifrões e os envolve, garantindo a renderização correta.
+    """
+    # Padrões para encontrar comandos LaTeX comuns que não estão entre cifrões.
+    # A expressão (?<!\$) é um "negative lookbehind" que garante que o padrão não é precedido por um $.
+    padroes = [
+        r"(?<!\$)\\frac\{[^\}]+\}\{[^\}]+\}", # Para frações \frac{a}{b}
+        r"(?<!\$)\\sqrt\{[^\}]+\}",          # Para raízes \sqrt{a}
+        r"(?<!\$)\\sum_\{[^\}]+\}\^\{[^\}]+\}", # Para somatórios \sum_{i=0}^{n}
+        r"(?<!\$)[a-zA-Z]\^[0-9]+",           # Para potências simples como x^2
+    ]
+
+    def adicionar_cifroes(match):
+        # Envolve o padrão encontrado com cifrões
+        return f"${match.group(0)}$"
+
+    for padrao in padroes:
+        texto = re.sub(padrao, adicionar_cifroes, texto)
+
+    return texto
+
 
 # --- Carregamento de Dados (com Cache) ---
 @st.cache_data
 def carregar_dados():
-    """Carrega o DataFrame e extrai a matriz de embeddings.
-    Usa o cache do Streamlit para executar esta função apenas uma vez."""
+    """Carrega o DataFrame e extrai a matriz de embeddings."""
     log_to_terminal("Iniciando carregamento dos dados...")
     try:
         df = pd.read_parquet("dados_curriculares_enriquecidos.parquet")
@@ -39,7 +62,7 @@ def carregar_dados():
         log_to_terminal("Dados carregados com sucesso!")
         return df, matriz_embeddings
     except FileNotFoundError:
-        st.error("Arquivo 'dados_curriculares_enriquecidos.parquet' não encontrado. Verifique o caminho.")
+        st.error("Arquivo 'dados_curriculares_enriquecidos.parquet' não encontrado.")
         log_to_terminal("ERRO: Arquivo de dados não encontrado.")
         return None, None
 
@@ -79,17 +102,15 @@ def buscar_conteudo_relevante(query_embedding, df, matriz_embeddings, ano_aluno,
     return resultados.iloc[[0]]
 
 # --- Inicialização da Aplicação ---
-# Verifica se a chave da API foi configurada nos segredos do Streamlit
 try:
     client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 except (KeyError, FileNotFoundError):
     st.error("Chave da API da OpenAI não encontrada. Por favor, configure o arquivo .streamlit/secrets.toml")
     st.stop()
 
-# Carrega os dados após a inicialização do session state
 df, matriz_embeddings = carregar_dados()
 if df is None:
-    st.stop() # Interrompe a execução se os dados não puderem ser carregados
+    st.stop()
 
 # --- Interface do Usuário (UI) ---
 st.title("🤖 Tutor Inteligente de Matemática")
@@ -99,16 +120,14 @@ with st.sidebar:
     st.header("Configurações")
     anos_disponiveis = sorted(df['Ano'].unique())
     
-    # O valor do selectbox agora usa o que já está no session_state como padrão
     ano_selecionado = st.selectbox(
         "Qual ano você está cursando?",
         options=anos_disponiveis,
-        index=anos_disponiveis.index(st.session_state.aluno_ano) # Garante que o índice corresponda ao ano
+        index=anos_disponiveis.index(st.session_state.aluno_ano)
     )
-    # Atualiza o session_state se o usuário mudar a seleção
     if ano_selecionado != st.session_state.aluno_ano:
         st.session_state.aluno_ano = ano_selecionado
-        st.rerun() # Opcional: recarregar se a mudança de ano deve limpar o chat
+        st.rerun()
         
     st.divider()
 
@@ -138,14 +157,17 @@ if prompt := st.chat_input("O que vamos estudar hoje?"):
 
             if not df_contexto.empty:
                 contexto_curricular = df_contexto.iloc[0]['texto_completo']
-                fonte = f"Fonte: Currículo do {df_contexto.iloc[0]['Ano']}º ano - {df_contexto.iloc[0]['Objetos do conhecimento']}"
                 log_to_terminal("Contexto selecionado para a API.")
                 
+                # --- PROMPT DO SISTEMA ATUALIZADO ---
                 system_prompt = f"""
                 Você é um tutor de matemática amigável, paciente e didático.
                 Sua missão é ajudar um aluno do {st.session_state.aluno_ano}º ano.
                 Use o seguinte CONTEXTO CURRICULAR para basear sua resposta. Não invente informações.
                 Seja claro, use exemplos simples e sempre responda em português do Brasil.
+
+                IMPORTANTE: Sempre que você escrever notação matemática, como frações, raízes ou equações, coloque-a entre cifrões ($).
+                Por exemplo, para a fração 3/4, escreva: $\\frac{{3}}{{4}}$. Para uma equação, escreva: $x^2 + y^2 = z^2$.
 
                 CONTEXTO CURRICULAR:
                 {contexto_curricular}
@@ -162,9 +184,23 @@ if prompt := st.chat_input("O que vamos estudar hoje?"):
                         messages=mensagens_para_api,
                         stream=True,
                     )
-                    response = st.write_stream(stream)
-                    st.session_state.messages.append({"role": "assistant", "content": response})
+                    
+                    # --- LÓGICA DE STREAMING APRIMORADA ---
+                    resposta_completa = ""
+                    placeholder = st.empty()
+                    for chunk in stream:
+                        resposta_completa += (chunk.choices[0].delta.content or "")
+                        placeholder.markdown(resposta_completa + "▌") # Efeito de digitação
+
+                    # Corrige a resposta completa ANTES de finalizar
+                    resposta_corrigida = corrigir_notacao_latex(resposta_completa)
+                    placeholder.markdown(resposta_corrigida) # Exibe a versão final corrigida
+
+                    st.session_state.messages.append({"role": "assistant", "content": resposta_corrigida})
                     log_to_terminal("Resposta da API recebida e exibida.")
+                    if resposta_completa != resposta_corrigida:
+                        log_to_terminal("Notação LaTeX corrigida na resposta da API.")
+
                 except Exception as e:
                     st.error(f"Ocorreu um erro com a API da OpenAI: {e}")
                     log_to_terminal(f"ERRO na API de Chat: {e}")
