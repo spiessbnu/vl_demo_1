@@ -20,16 +20,8 @@ if "aluno_ano" not in st.session_state:
     st.session_state.aluno_ano = 5
 
 def log_to_terminal(message):
-    st.session_state.log_messages.append(str(message)) # Converte para string para segurança
+    st.session_state.log_messages.append(str(message))
     logging.info(message)
-
-def criar_query_contextualizada(historico_mensagens: list, max_turnos=2) -> str:
-    log_to_terminal("Criando query contextualizada para a busca...")
-    mensagens_relevantes = historico_mensagens[-max_turnos*2:]
-    query_contextualizada = " ".join(
-        [f"{msg['role']}: {msg['content']}" for msg in mensagens_relevantes]
-    )
-    return query_contextualizada
 
 def corrigir_latex_inline(texto: str) -> str:
     pattern = r'(?<!\$)\\(frac|rac)\{([^\}]+)\}\{([^\}]+)\}(?!\$)'
@@ -39,6 +31,7 @@ def corrigir_latex_inline(texto: str) -> str:
         return f"$\\frac{{{numerador}}}{{{denominador}}}$"
     return re.sub(pattern, normalizar_e_delimitar, texto)
 
+# --- Funções de Carregamento de Dados e RAG (sem alterações) ---
 @st.cache_data
 def carregar_dados():
     log_to_terminal("Iniciando carregamento dos dados...")
@@ -75,6 +68,15 @@ def buscar_conteudo_relevante(query_embedding, df, matriz_embeddings, ano_aluno,
         log_to_terminal(f"- {i} | {row['Ano']}º ano | {row['similaridade']:.4f}")
     return resultados.iloc[[0]]
 
+def criar_query_contextualizada(historico_mensagens: list, max_turnos=2) -> str:
+    log_to_terminal("Criando query contextualizada para a busca...")
+    mensagens_relevantes = historico_mensagens[-max_turnos*2:]
+    query_contextualizada = " ".join(
+        [f"{msg['role']}: {msg['content']}" for msg in mensagens_relevantes]
+    )
+    return query_contextualizada
+
+# --- Inicialização e UI ---
 try:
     client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 except (KeyError, FileNotFoundError):
@@ -103,31 +105,27 @@ with st.sidebar:
         log_text = "\n".join(st.session_state.log_messages)
         log_container.text(log_text)
 
+# --- NOVA LÓGICA DE RENDERIZAÇÃO SIMPLIFICADA ---
 def renderizar_mensagem(message):
     if message["role"] == "user":
         st.markdown(message["content"])
         return
+
     try:
         data = json.loads(message["content"])
-        for block in data.get("response", []):
-            block_type = block.get("type")
-            content = block.get("content")
-            if block_type == "paragraph":
-                st.markdown(corrigir_latex_inline(content))
-            elif block_type == "math_block":
-                st.latex(content)
-            elif block_type == "list":
-                list_md = ""
-                for item in block.get("items", []):
-                    list_md += f"- {corrigir_latex_inline(item)}\n"
-                st.markdown(list_md)
+        # O valor de 'response' agora é uma simples lista de strings
+        for line in data.get("response", []):
+            # Aplicamos a correção e renderizamos cada linha
+            st.markdown(corrigir_latex_inline(line))
     except (json.JSONDecodeError, TypeError):
+        # Fallback para o caso de a resposta não ser um JSON
         st.markdown(corrigir_latex_inline(message["content"]))
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         renderizar_mensagem(message)
 
+# --- LÓGICA PRINCIPAL DO CHAT ---
 if prompt := st.chat_input("O que vamos estudar hoje?"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -150,31 +148,44 @@ if prompt := st.chat_input("O que vamos estudar hoje?"):
                 log_to_terminal(f"Índice: {contexto_row.name}, Ano: {contexto_row['Ano']}, Score: {contexto_row['similaridade']:.4f}")
                 log_to_terminal("---------------------------------------\n" + contexto_curricular + "\n---------------------------------------\n")
                 
+                # --- NOVO PROMPT DO SISTEMA SIMPLIFICADO ---
                 system_prompt = f"""
-                Você é um tutor de matemática. Sua resposta DEVE ser um objeto JSON válido...
-                """ # O prompt foi omitido por brevidade, mas continua o mesmo
+                Você é um tutor de matemática. Sua resposta DEVE ser um objeto JSON válido.
+                O JSON deve conter uma única chave: "response".
+                O valor de "response" deve ser uma lista de strings. Cada string é um parágrafo ou um item de lista (começando com '- ').
+                Use Markdown e LaTeX (com $...$) para formatar o texto dentro das strings.
+
+                Exemplo de resposta JSON válida:
+                {{
+                  "response": [
+                    "A fórmula de Bhaskara é usada para resolver equações de segundo grau.",
+                    "A fórmula é: $$\\Delta = b^2 - 4ac$$",
+                    "- Onde $a$, $b$, e $c$ são os coeficientes da equação.",
+                    "- O valor de $x$ é encontrado com $x = \\frac{{-b \\pm \\sqrt{{\\Delta}}}}{{2a}}$."
+                  ]
+                }}
+
+                Agora, usando o CONTEXTO CURRICULAR abaixo, responda à pergunta do aluno do {st.session_state.aluno_ano}º ano seguindo ESTRITAMENTE o formato JSON.
+                CONTEXTO CURRICULAR: {contexto_curricular}
+                """
                 mensagens_para_api = [{"role": "system", "content": system_prompt}] + st.session_state.messages
                 
-                log_to_terminal("Enviando requisição para API (modo JSON)...")
+                log_to_terminal("Enviando requisição para API (modo JSON simplificado)...")
                 try:
                     response = client.chat.completions.create(
                         model="gpt-4o-mini", messages=mensagens_para_api,
                         response_format={"type": "json_object"}
                     )
                     resposta_json_str = response.choices[0].message.content
-                    
-                    # --- LINHAS DE DEBUG ADICIONADAS ---
                     log_to_terminal("\n--- RESPOSTA BRUTA DA API (JSON) ---")
                     log_to_terminal(resposta_json_str)
-                    # ------------------------------------
-
                     st.session_state.messages.append({"role": "assistant", "content": resposta_json_str})
                     log_to_terminal("Resposta JSON adicionada ao histórico.")
                 except Exception as e:
                     st.error(f"Ocorreu um erro com a API da OpenAI: {e}")
                     log_to_terminal(f"ERRO na API de Chat: {e}")
             else:
-                fallback_msg = {"response": [{"type": "paragraph", "content": "Não consegui encontrar um conteúdo diretamente relacionado no currículo."}]}
+                fallback_msg = {"response": ["Não consegui encontrar um conteúdo diretamente relacionado no currículo. Você pode tentar reformular a pergunta?"]}
                 st.session_state.messages.append({"role": "assistant", "content": json.dumps(fallback_msg)})
                 log_to_terminal("Nenhum contexto relevante encontrado.")
     st.rerun()
