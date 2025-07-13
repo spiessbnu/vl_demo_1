@@ -222,18 +222,15 @@ elif st.session_state.app_state == "CHAT":
                 st.session_state.log_messages = []
                 log_to_terminal("--- NOVA QUERY (CHAT) ---")
                 
-                # --- ABORDAGEM ROBUSTA COM .format() ---
-                # 1. Obtenha os dados dinâmicos
                 topico_selecionado = df.loc[st.session_state.topico_selecionado_idx]
                 nome_topico = topico_selecionado['Objetos do conhecimento']
                 contexto_curricular = topico_selecionado['texto_completo']
 
-                # 2. Defina o template como uma string normal
                 prompt_template = """
                 Você é um tutor de matemática especialista. Sua tarefa é fornecer explicações claras e precisas.
 
                 **REGRAS DE FORMATAÇÃO ESTRITAS:**
-                1.  **JSON OBRIGATÓRIO:** Sua resposta DEVE ser um objeto JSON válido com uma chave "response" contendo uma lista de strings.
+                1.  **JSON OBRIGATÁRIO:** Sua resposta DEVE ser um objeto JSON válido com uma chave "response" contendo uma lista de strings.
                 2.  **LATEX PARA TUDO:** SEMPRE use a sintaxe LaTeX para TODA e QUALQUER notação matemática. Envolva as fórmulas com delimitadores.
                     - Use $ ... $ para matemática em linha (no meio de uma frase).
                     - Use $$ ... $$ para equações de destaque (em sua própria linha).
@@ -255,7 +252,6 @@ elif st.session_state.app_state == "CHAT":
                 CONTEXTO CURRICULAR: {curriculum_context}
                 """
                 
-                # 3. Preencha o template de forma segura
                 system_prompt = prompt_template.format(
                     topic_name=nome_topico,
                     curriculum_context=contexto_curricular
