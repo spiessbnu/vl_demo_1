@@ -39,11 +39,8 @@ def corrigir_formatacao_matematica(texto: str) -> str:
     """
     Aplica correções de formatação LaTeX em uma string para garantir a renderização correta.
     """
-    # 1. Corrige o 'extsqrt(...)' para o comando LaTeX correto
     texto = re.sub(r'extsqrt\(([^)]+)\)', r'$\\sqrt{\1}$', texto)
-    # 2. Garante que notações de pontos como A(1,2) ou P(x,y) sejam formatadas
     texto = re.sub(r'(?<!\$)\b([A-Z])\(([^)]+)\)\b(?!\$)', r'$\1(\2)$', texto)
-    # 3. Corrige frações como \frac{a}{b} que não estão dentro de $...$
     pattern_frac = r'(?<!\$)\\(frac|rac)\{([^\}]+)\}\{([^\}]+)\}(?!\$)'
     def normalizar_e_delimitar(match):
         numerador = match.group(2)
@@ -225,34 +222,44 @@ elif st.session_state.app_state == "CHAT":
                 st.session_state.log_messages = []
                 log_to_terminal("--- NOVA QUERY (CHAT) ---")
                 
-                topico_atual_texto = df.loc[st.session_state.topico_selecionado_idx, 'texto_completo']
-                query_para_rag = criar_query_contextualizada(st.session_state.messages, topico_atual_texto)
-                
-                system_prompt = f"""
+                # --- ABORDAGEM ROBUSTA COM .format() ---
+                # 1. Obtenha os dados dinâmicos
+                topico_selecionado = df.loc[st.session_state.topico_selecionado_idx]
+                nome_topico = topico_selecionado['Objetos do conhecimento']
+                contexto_curricular = topico_selecionado['texto_completo']
+
+                # 2. Defina o template como uma string normal
+                prompt_template = """
                 Você é um tutor de matemática especialista. Sua tarefa é fornecer explicações claras e precisas.
 
                 **REGRAS DE FORMATAÇÃO ESTRITAS:**
                 1.  **JSON OBRIGATÓRIO:** Sua resposta DEVE ser um objeto JSON válido com uma chave "response" contendo uma lista de strings.
                 2.  **LATEX PARA TUDO:** SEMPRE use a sintaxe LaTeX para TODA e QUALQUER notação matemática. Envolva as fórmulas com delimitadores.
-                    - Use `$ ... $` para matemática em linha (no meio de uma frase).
-                    - Use `$$ ... $$` para equações de destaque (em sua própria linha).
+                    - Use $ ... $ para matemática em linha (no meio de uma frase).
+                    - Use $$ ... $$ para equações de destaque (em sua própria linha).
                 3.  **COMANDOS PADRÃO:** Utilize apenas comandos LaTeX padrão. NUNCA invente comandos como 'extsqrt'.
 
                 **MINI-DICIONÁRIO DE LATEX:**
-                - Raiz quadrada: `\\sqrt{{...}}` (Ex: `$\\sqrt{{b^2 - 4ac}}$`)
-                - Fração: `\\frac{{numerador}}{{denominador}}` (Ex: `$\\frac{{1}}{{2}}$`)
-                - Expoente: `^` (Ex: `$x^2$`)
-                - Subscrito: `_` (Ex: `$x_1$`)
-                - Pontos de coordenadas: `$A(x_1, y_1)$`
+                - Raiz quadrada: \\sqrt{...} (Ex: $\\sqrt{b^2 - 4ac}$)
+                - Fração: \\frac{numerador}{denominador} (Ex: $\\frac{1}{2}$)
+                - Expoente: ^ (Ex: $x^2$)
+                - Subscrito: _ (Ex: $x_1$)
+                - Pontos de coordenadas: $A(x_1, y_1)$
 
                 **EXEMPLO OBRIGATÓRIO:**
                 - **RUIM:** A distância d é extsqrt((x2-x1)^2).
-                - **BOM:** A distância $d$ é calculada com a fórmula $\\sqrt{{(x_2 - x_1)}^2}}$.
+                - **BOM:** A distância $d$ é calculada com a fórmula $\\sqrt{(x_2 - x_1)^2}$.
 
-                O aluno está estudando o tópico: "{df.loc[st.session_state.topico_selecionado_idx, 'Objetos do conhecimento']}".
+                O aluno está estudando o tópico: "{topic_name}".
                 Use o CONTEXTO CURRICULAR abaixo para responder, seguindo ESTRITAMENTE todas as regras acima.
-                CONTEXTO CURRICULAR: {topico_atual_texto}
+                CONTEXTO CURRICULAR: {curriculum_context}
                 """
+                
+                # 3. Preencha o template de forma segura
+                system_prompt = prompt_template.format(
+                    topic_name=nome_topico,
+                    curriculum_context=contexto_curricular
+                )
                 
                 mensagens_para_api = [{"role": "system", "content": system_prompt}] + st.session_state.messages
                 
