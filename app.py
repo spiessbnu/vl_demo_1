@@ -240,15 +240,15 @@ elif st.session_state.app_state == "CHAT":
                 3.  **COMANDOS PADRÃO:** Utilize apenas comandos LaTeX padrão. NUNCA invente comandos como 'extsqrt'.
 
                 **MINI-DICIONÁRIO DE LATEX:**
-                - Raiz quadrada: \\sqrt{...} (Ex: $\\sqrt{b^2 - 4ac}$)
-                - Fração: \\frac{numerador}{denominador} (Ex: $\\frac{1}{2}$)
+                - Raiz quadrada: \\sqrt{{...}} (Ex: $\\sqrt{{b^2 - 4ac}}$)
+                - Fração: \\frac{{numerador}}{{denominador}} (Ex: $\\frac{{1}}{{2}}$)
                 - Expoente: ^ (Ex: $x^2$)
                 - Subscrito: _ (Ex: $x_1$)
                 - Pontos de coordenadas: $A(x_1, y_1)$
 
                 **EXEMPLO OBRIGATÓRIO:**
                 - **RUIM:** A distância d é extsqrt((x2-x1)^2).
-                - **BOM:** A distância $d$ é calculada com a fórmula $\\sqrt{(x_2 - x_1)^2}$.
+                - **BOM:** A distância $d$ é calculada com a fórmula $\\sqrt{{(x_2 - x_1)}^2}$.
 
                 O aluno está estudando o tópico: "{topic_name}".
                 Use o CONTEXTO CURRICULAR abaixo para responder, seguindo ESTRITAMENTE todas as regras acima.
