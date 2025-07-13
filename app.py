@@ -245,7 +245,7 @@ elif st.session_state.app_state == "CHAT":
 
                 **EXEMPLO OBRIGATÓRIO:**
                 - **RUIM:** A distância d é extsqrt((x2-x1)^2).
-                - **BOM:** A distância $d$ é calculada com a fórmula $\\sqrt{{(x_2 - x_1)}^2}$.
+                - **BOM:** A distância $d$ é calculada com a fórmula $\\sqrt{{(x_2 - x_1)}^2}}$.
 
                 O aluno está estudando o tópico: "{topic_name}".
                 Use o CONTEXTO CURRICULAR abaixo para responder, seguindo ESTRITAMENTE todas as regras acima.
