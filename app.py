@@ -35,19 +35,7 @@ def log_to_terminal(message):
     st.session_state.log_messages.append(str(message))
     logging.info(message)
 
-def corrigir_formatacao_matematica(texto: str) -> str:
-    """
-    Aplica correções de formatação LaTeX em uma string para garantir a renderização correta.
-    """
-    texto = re.sub(r'extsqrt\(([^)]+)\)', r'$\\sqrt{\1}$', texto)
-    texto = re.sub(r'(?<!\$)\b([A-Z])\(([^)]+)\)\b(?!\$)', r'$\1(\2)$', texto)
-    pattern_frac = r'(?<!\$)\\(frac|rac)\{([^\}]+)\}\{([^\}]+)\}(?!\$)'
-    def normalizar_e_delimitar(match):
-        numerador = match.group(2)
-        denominador = match.group(3)
-        return f"$\\frac{{{numerador}}}{{{denominador}}}$"
-    texto = re.sub(pattern_frac, normalizar_e_delimitar, texto)
-    return texto
+# REMOVIDO: A função de correção de LaTeX não é mais necessária para esta versão simples.
 
 @st.cache_data
 def carregar_dados():
@@ -101,15 +89,8 @@ def extrair_dados_iniciais(texto_usuario, client):
         return None
 
 def renderizar_mensagem(message):
-    if message["role"] == "user":
-        st.markdown(message["content"])
-        return
-    try:
-        data = json.loads(message["content"])
-        for line in data.get("response", []):
-            st.markdown(corrigir_formatacao_matematica(line), unsafe_allow_html=True)
-    except (json.JSONDecodeError, TypeError):
-        st.markdown(corrigir_formatacao_matematica(message["content"]), unsafe_allow_html=True)
+    # Função drasticamente simplificada: apenas exibe o conteúdo da mensagem.
+    st.markdown(message["content"])
 
 def criar_query_contextualizada(historico_mensagens: list, topico_atual: str) -> str:
     log_to_terminal("Criando query contextualizada para a busca...")
@@ -179,10 +160,9 @@ elif st.session_state.app_state == "SELECAO_TOPICO":
                         st.session_state.topico_selecionado_idx = idx
                         st.session_state.app_state = "CHAT"
                         st.session_state.initial_action_taken = False
+                        # Mensagem inicial simplificada para uma string simples
                         st.session_state.messages = [
-                            {"role": "assistant", "content": json.dumps({
-                                "response": [f"Ok! Vamos focar em **{df.loc[idx, 'Objetos do conhecimento']}**. O que você gostaria de saber? Me peça uma explicação, exemplos ou exercícios!"]
-                            })}
+                            {"role": "assistant", "content": f"Ok! Vamos focar em **{df.loc[idx, 'Objetos do conhecimento']}**. O que você gostaria de saber? Me peça uma explicação, exemplos ou exercícios!"}
                         ]
                         st.rerun()
 
@@ -196,6 +176,7 @@ elif st.session_state.app_state == "CHAT":
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
+            # Chamada para a função de renderização simplificada
             renderizar_mensagem(message)
     
     prompt_gerado = None
@@ -223,52 +204,32 @@ elif st.session_state.app_state == "CHAT":
                 log_to_terminal("--- NOVA QUERY (CHAT) ---")
                 
                 topico_selecionado = df.loc[st.session_state.topico_selecionado_idx]
-                nome_topico = topico_selecionado['Objetos do conhecimento']
                 contexto_curricular = topico_selecionado['texto_completo']
 
-                prompt_template = """
-                Você é um tutor de matemática especialista. Sua tarefa é fornecer explicações claras e precisas.
-
-                **REGRAS DE FORMATAÇÃO ESTRITAS:**
-                1.  **JSON OBRIGATÁRIO:** Sua resposta DEVE ser um objeto JSON válido com uma chave "response" contendo uma lista de strings.
-                2.  **LATEX PARA TUDO:** SEMPRE use a sintaxe LaTeX para TODA e QUALQUER notação matemática. Envolva as fórmulas com delimitadores.
-                    - Use $ ... $ para matemática em linha (no meio de uma frase).
-                    - Use $$ ... $$ para equações de destaque (em sua própria linha).
-                3.  **COMANDOS PADRÃO:** Utilize apenas comandos LaTeX padrão. NUNCA invente comandos como 'extsqrt'.
-
-                **MINI-DICIONÁRIO DE LATEX:**
-                - Raiz quadrada: \\sqrt{{...}} (Ex: $\\sqrt{{b^2 - 4ac}}$)
-                - Fração: \\frac{{numerador}}{{denominador}} (Ex: $\\frac{{1}}{{2}}$)
-                - Expoente: ^ (Ex: $x^2$)
-                - Subscrito: _ (Ex: $x_1$)
-                - Pontos de coordenadas: $A(x_1, y_1)$
-
-                **EXEMPLO OBRIGATÓRIO:**
-                - **RUIM:** A distância d é extsqrt((x2-x1)^2).
-                - **BOM:** A distância $d$ é calculada com a fórmula $\\sqrt{{(x_2 - x_1)}^2}}$.
-
-                O aluno está estudando o tópico: "{topic_name}".
-                Use o CONTEXTO CURRICULAR abaixo para responder, seguindo ESTRITAMENTE todas as regras acima.
-                CONTEXTO CURRICULAR: {curriculum_context}
-                """
+                # Prompt do sistema drasticamente simplificado
+                system_prompt = f"""
+                Você é um tutor de matemática amigável e prestativo.
+                Use o CONTEXTO CURRICULAR abaixo para responder a pergunta do aluno.
+                Seja claro e use exemplos simples. Você pode usar formatação Markdown.
                 
-                system_prompt = prompt_template.format(
-                    topic_name=nome_topico,
-                    curriculum_context=contexto_curricular
-                )
+                CONTEXTO CURRICULAR:
+                {contexto_curricular}
+                """
                 
                 mensagens_para_api = [{"role": "system", "content": system_prompt}] + st.session_state.messages
                 
-                log_to_terminal("Enviando requisição para API (modo JSON)...")
+                log_to_terminal("Enviando requisição para API (modo texto)...")
                 try:
+                    # Chamada de API simplificada, sem forçar JSON
                     response = client.chat.completions.create(
-                        model="gpt-4o-mini", messages=mensagens_para_api,
-                        response_format={"type": "json_object"}
+                        model="gpt-4o-mini", 
+                        messages=mensagens_para_api
                     )
-                    resposta_json_str = response.choices[0].message.content
-                    st.session_state.messages.append({"role": "assistant", "content": resposta_json_str})
-                    log_to_terminal("\n--- RESPOSTA BRUTA DA API (JSON) ---")
-                    log_to_terminal(resposta_json_str)
+                    # A resposta agora é uma string de texto simples
+                    resposta_texto = response.choices[0].message.content
+                    st.session_state.messages.append({"role": "assistant", "content": resposta_texto})
+                    log_to_terminal("\n--- RESPOSTA BRUTA DA API (TEXTO) ---")
+                    log_to_terminal(resposta_texto)
                 except Exception as e:
                     st.error(f"Ocorreu um erro com a API da OpenAI: {e}")
                     log_to_terminal(f"ERRO na API de Chat: {e}")
