@@ -40,13 +40,9 @@ def corrigir_formatacao_matematica(texto: str) -> str:
     Aplica correções de formatação LaTeX em uma string para garantir a renderização correta.
     """
     # 1. Corrige o 'extsqrt(...)' para o comando LaTeX correto
-    # Padrão: extsqrt( qualquer_coisa_sem_parenteses_fechado )
     texto = re.sub(r'extsqrt\(([^)]+)\)', r'$\\sqrt{\1}$', texto)
-
     # 2. Garante que notações de pontos como A(1,2) ou P(x,y) sejam formatadas
-    # Padrão: Uma letra maiúscula seguida por parênteses que não esteja dentro de $...$
     texto = re.sub(r'(?<!\$)\b([A-Z])\(([^)]+)\)\b(?!\$)', r'$\1(\2)$', texto)
-
     # 3. Corrige frações como \frac{a}{b} que não estão dentro de $...$
     pattern_frac = r'(?<!\$)\\(frac|rac)\{([^\}]+)\}\{([^\}]+)\}(?!\$)'
     def normalizar_e_delimitar(match):
@@ -54,7 +50,6 @@ def corrigir_formatacao_matematica(texto: str) -> str:
         denominador = match.group(3)
         return f"$\\frac{{{numerador}}}{{{denominador}}}$"
     texto = re.sub(pattern_frac, normalizar_e_delimitar, texto)
-
     return texto
 
 @st.cache_data
@@ -199,7 +194,7 @@ elif st.session_state.app_state == "CHAT":
     if st.button("⬅️ Mudar de Tópico"):
         st.session_state.messages = []
         st.session_state.app_state = "SELECAO_TOPICO"
-        st.session_state.df_com_similaridade = None # Limpa para permitir nova busca se o usuário voltar
+        st.session_state.df_com_similaridade = None
         st.rerun()
 
     for message in st.session_state.messages:
@@ -233,7 +228,6 @@ elif st.session_state.app_state == "CHAT":
                 topico_atual_texto = df.loc[st.session_state.topico_selecionado_idx, 'texto_completo']
                 query_para_rag = criar_query_contextualizada(st.session_state.messages, topico_atual_texto)
                 
-                # --- PROMPT DO SISTEMA MELHORADO ---
                 system_prompt = f"""
                 Você é um tutor de matemática especialista. Sua tarefa é fornecer explicações claras e precisas.
 
@@ -253,7 +247,7 @@ elif st.session_state.app_state == "CHAT":
 
                 **EXEMPLO OBRIGATÓRIO:**
                 - **RUIM:** A distância d é extsqrt((x2-x1)^2).
-                - **BOM:** A distância $d$ é calculada com a fórmula $\\sqrt{{(x_2 - x_1)}^2}$.
+                - **BOM:** A distância $d$ é calculada com a fórmula $\\sqrt{{(x_2 - x_1)}^2}}$.
 
                 O aluno está estudando o tópico: "{df.loc[st.session_state.topico_selecionado_idx, 'Objetos do conhecimento']}".
                 Use o CONTEXTO CURRICULAR abaixo para responder, seguindo ESTRITAMENTE todas as regras acima.
