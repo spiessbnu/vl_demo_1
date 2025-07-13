@@ -35,13 +35,27 @@ def log_to_terminal(message):
     st.session_state.log_messages.append(str(message))
     logging.info(message)
 
-def corrigir_latex_inline(texto: str) -> str:
-    pattern = r'(?<!\$)\\(frac|rac)\{([^\}]+)\}\{([^\}]+)\}(?!\$)'
+def corrigir_formatacao_matematica(texto: str) -> str:
+    """
+    Aplica correções de formatação LaTeX em uma string para garantir a renderização correta.
+    """
+    # 1. Corrige o 'extsqrt(...)' para o comando LaTeX correto
+    # Padrão: extsqrt( qualquer_coisa_sem_parenteses_fechado )
+    texto = re.sub(r'extsqrt\(([^)]+)\)', r'$\\sqrt{\1}$', texto)
+
+    # 2. Garante que notações de pontos como A(1,2) ou P(x,y) sejam formatadas
+    # Padrão: Uma letra maiúscula seguida por parênteses que não esteja dentro de $...$
+    texto = re.sub(r'(?<!\$)\b([A-Z])\(([^)]+)\)\b(?!\$)', r'$\1(\2)$', texto)
+
+    # 3. Corrige frações como \frac{a}{b} que não estão dentro de $...$
+    pattern_frac = r'(?<!\$)\\(frac|rac)\{([^\}]+)\}\{([^\}]+)\}(?!\$)'
     def normalizar_e_delimitar(match):
         numerador = match.group(2)
         denominador = match.group(3)
         return f"$\\frac{{{numerador}}}{{{denominador}}}$"
-    return re.sub(pattern, normalizar_e_delimitar, texto)
+    texto = re.sub(pattern_frac, normalizar_e_delimitar, texto)
+
+    return texto
 
 @st.cache_data
 def carregar_dados():
@@ -101,9 +115,9 @@ def renderizar_mensagem(message):
     try:
         data = json.loads(message["content"])
         for line in data.get("response", []):
-            st.markdown(corrigir_latex_inline(line), unsafe_allow_html=True)
+            st.markdown(corrigir_formatacao_matematica(line), unsafe_allow_html=True)
     except (json.JSONDecodeError, TypeError):
-        st.markdown(corrigir_latex_inline(message["content"]), unsafe_allow_html=True)
+        st.markdown(corrigir_formatacao_matematica(message["content"]), unsafe_allow_html=True)
 
 def criar_query_contextualizada(historico_mensagens: list, topico_atual: str) -> str:
     log_to_terminal("Criando query contextualizada para a busca...")
@@ -185,7 +199,7 @@ elif st.session_state.app_state == "CHAT":
     if st.button("⬅️ Mudar de Tópico"):
         st.session_state.messages = []
         st.session_state.app_state = "SELECAO_TOPICO"
-        st.session_state.df_com_similaridade = None
+        st.session_state.df_com_similaridade = None # Limpa para permitir nova busca se o usuário voltar
         st.rerun()
 
     for message in st.session_state.messages:
@@ -219,23 +233,33 @@ elif st.session_state.app_state == "CHAT":
                 topico_atual_texto = df.loc[st.session_state.topico_selecionado_idx, 'texto_completo']
                 query_para_rag = criar_query_contextualizada(st.session_state.messages, topico_atual_texto)
                 
+                # --- PROMPT DO SISTEMA MELHORADO ---
                 system_prompt = f"""
-                Você é um tutor de matemática. Sua resposta DEVE ser um objeto JSON válido com uma chave "response" contendo uma lista de strings.
-                Use Markdown e LaTeX (com $...$) para formatar o texto dentro das strings.
+                Você é um tutor de matemática especialista. Sua tarefa é fornecer explicações claras e precisas.
 
-                Exemplo de resposta JSON válida:
-                {{
-                  "response": [
-                    "A fórmula de Bhaskara é usada para resolver equações de segundo grau.",
-                    "A fórmula é: $$\\Delta = b^2 - 4ac$$",
-                    "- Onde $a$, $b$, e $c$ são os coeficientes da equação."
-                  ]
-                }}
+                **REGRAS DE FORMATAÇÃO ESTRITAS:**
+                1.  **JSON OBRIGATÓRIO:** Sua resposta DEVE ser um objeto JSON válido com uma chave "response" contendo uma lista de strings.
+                2.  **LATEX PARA TUDO:** SEMPRE use a sintaxe LaTeX para TODA e QUALQUER notação matemática. Envolva as fórmulas com delimitadores.
+                    - Use `$ ... $` para matemática em linha (no meio de uma frase).
+                    - Use `$$ ... $$` para equações de destaque (em sua própria linha).
+                3.  **COMANDOS PADRÃO:** Utilize apenas comandos LaTeX padrão. NUNCA invente comandos como 'extsqrt'.
+
+                **MINI-DICIONÁRIO DE LATEX:**
+                - Raiz quadrada: `\\sqrt{{...}}` (Ex: `$\\sqrt{{b^2 - 4ac}}$`)
+                - Fração: `\\frac{{numerador}}{{denominador}}` (Ex: `$\\frac{{1}}{{2}}$`)
+                - Expoente: `^` (Ex: `$x^2$`)
+                - Subscrito: `_` (Ex: `$x_1$`)
+                - Pontos de coordenadas: `$A(x_1, y_1)$`
+
+                **EXEMPLO OBRIGATÓRIO:**
+                - **RUIM:** A distância d é extsqrt((x2-x1)^2).
+                - **BOM:** A distância $d$ é calculada com a fórmula $\\sqrt{{(x_2 - x_1)}^2}$.
 
                 O aluno está estudando o tópico: "{df.loc[st.session_state.topico_selecionado_idx, 'Objetos do conhecimento']}".
-                Use o CONTEXTO CURRICULAR abaixo para responder a pergunta dele, seguindo ESTRITAMENTE o formato JSON.
+                Use o CONTEXTO CURRICULAR abaixo para responder, seguindo ESTRITAMENTE todas as regras acima.
                 CONTEXTO CURRICULAR: {topico_atual_texto}
                 """
+                
                 mensagens_para_api = [{"role": "system", "content": system_prompt}] + st.session_state.messages
                 
                 log_to_terminal("Enviando requisição para API (modo JSON)...")
