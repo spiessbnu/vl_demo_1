@@ -35,8 +35,6 @@ def log_to_terminal(message):
     st.session_state.log_messages.append(str(message))
     logging.info(message)
 
-# REMOVIDO: A função de correção de LaTeX não é mais necessária para esta versão simples.
-
 @st.cache_data
 def carregar_dados():
     log_to_terminal("Iniciando carregamento dos dados...")
@@ -88,9 +86,28 @@ def extrair_dados_iniciais(texto_usuario, client):
         log_to_terminal(f"Erro ao extrair dados iniciais: {e}")
         return None
 
+# ★★★ INÍCIO DA ALTERAÇÃO ★★★
 def renderizar_mensagem(message):
-    # Função drasticamente simplificada: apenas exibe o conteúdo da mensagem.
-    st.markdown(message["content"])
+    """
+    Processa o texto da API para converter notações LaTeX para o formato
+    do Streamlit e exibe o conteúdo formatado.
+    """
+    # Pega o conteúdo de texto da mensagem
+    texto_bruto = message["content"]
+
+    # 1. Substitui o formato de bloco de LaTeX: \[ ... \] por $$ ... $$
+    # O st.markdown usa $$ para centralizar equações em destaque.
+    texto_processado = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', texto_bruto, flags=re.DOTALL)
+
+    # 2. Substitui o formato de LaTeX inline: \( ... \) por $ ... $
+    # O st.markdown usa $ para equações na mesma linha do texto.
+    texto_processado = re.sub(r'\\\((.*?)\\\)', r'$\1$', texto_processado, flags=re.DOTALL)
+
+    # 3. Renderiza o texto processado, que agora tem os delimitadores corretos.
+    # O uso de unsafe_allow_html=True também ajuda a renderizar outros elementos
+    # que a API possa enviar, como links de imagens.
+    st.markdown(texto_processado, unsafe_allow_html=True)
+# ★★★ FIM DA ALTERAÇÃO ★★★
 
 def criar_query_contextualizada(historico_mensagens: list, topico_atual: str) -> str:
     log_to_terminal("Criando query contextualizada para a busca...")
@@ -171,12 +188,12 @@ elif st.session_state.app_state == "CHAT":
     if st.button("⬅️ Mudar de Tópico"):
         st.session_state.messages = []
         st.session_state.app_state = "SELECAO_TOPICO"
-        st.session_state.df_com_similaridade = None
+        st.session_state.df_com_similaridade = None # Resetar para forçar nova busca se necessário
         st.rerun()
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
-            # Chamada para a função de renderização simplificada
+            # Chamada para a função de renderização que agora processa o LaTeX
             renderizar_mensagem(message)
     
     prompt_gerado = None
@@ -210,7 +227,7 @@ elif st.session_state.app_state == "CHAT":
                 system_prompt = f"""
                 Você é um tutor de matemática amigável e prestativo.
                 Use o CONTEXTO CURRICULAR abaixo para responder a pergunta do aluno.
-                Seja claro e use exemplos simples. Você pode usar formatação Markdown.
+                Seja claro e use exemplos simples. Você pode usar formatação Markdown e LaTeX (com delimitadores \\(para inline\\) e \\[para bloco\\]).
                 
                 CONTEXTO CURRICULAR:
                 {contexto_curricular}
