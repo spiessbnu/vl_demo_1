@@ -28,7 +28,13 @@ if "topico_selecionado_idx" not in st.session_state:
     st.session_state.topico_selecionado_idx = None
 if "initial_action_taken" not in st.session_state:
     st.session_state.initial_action_taken = False
-
+# --- NOVOS ESTADOS PARA SUGESTÃO E DESEMPENHO ---
+if 'sugestao_pendente' not in st.session_state:
+    st.session_state.sugestao_pendente = None
+if 'analise_feita_para_pergunta' not in st.session_state:
+    st.session_state.analise_feita_para_pergunta = 0
+if "desempenho_status" not in st.session_state:
+    st.session_state.desempenho_status = None # 'analisando', 'continuar', 'avancar'
 
 # --- 2. DEFINIÇÃO DE TODAS AS FUNÇÕES AUXILIARES ---
 def log_to_terminal(message):
@@ -86,36 +92,56 @@ def extrair_dados_iniciais(texto_usuario, client):
         log_to_terminal(f"Erro ao extrair dados iniciais: {e}")
         return None
 
-# ★★★ INÍCIO DA ALTERAÇÃO ★★★
 def renderizar_mensagem(message):
-    """
-    Processa o texto da API para converter notações LaTeX para o formato
-    do Streamlit e exibe o conteúdo formatado.
-    """
-    # Pega o conteúdo de texto da mensagem
     texto_bruto = message["content"]
-
-    # 1. Substitui o formato de bloco de LaTeX: \[ ... \] por $$ ... $$
-    # O st.markdown usa $$ para centralizar equações em destaque.
     texto_processado = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', texto_bruto, flags=re.DOTALL)
-
-    # 2. Substitui o formato de LaTeX inline: \( ... \) por $ ... $
-    # O st.markdown usa $ para equações na mesma linha do texto.
     texto_processado = re.sub(r'\\\((.*?)\\\)', r'$\1$', texto_processado, flags=re.DOTALL)
-
-    # 3. Renderiza o texto processado, que agora tem os delimitadores corretos.
-    # O uso de unsafe_allow_html=True também ajuda a renderizar outros elementos
-    # que a API possa enviar, como links de imagens.
     st.markdown(texto_processado, unsafe_allow_html=True)
-# ★★★ FIM DA ALTERAÇÃO ★★★
 
-def criar_query_contextualizada(historico_mensagens: list, topico_atual: str) -> str:
-    log_to_terminal("Criando query contextualizada para a busca...")
-    mensagens_relevantes = historico_mensagens[-4:]
-    contexto_str = " ".join([f"{msg['role']}: {msg['content']}" for msg in mensagens_relevantes])
-    query_final = f"Contexto do tópico: {topico_atual}. Conversa recente: {contexto_str}"
-    return query_final
+def analisar_progresso_do_topico(historico, topico_atual_idx, df_curriculo, client):
+    log_to_terminal("Iniciando análise de progresso pedagógico...")
+    topico_atual = df_curriculo.loc[topico_atual_idx]
+    proximos_topicos_potenciais = df_curriculo[
+        (df_curriculo['Ano'] == topico_atual['Ano']) &
+        (df_curriculo['Unidade Temática'] == topico_atual['Unidade Temática']) &
+        (df_curriculo.index != topico_atual_idx)
+    ]['Objetos do conhecimento'].tolist()
+    historico_texto = "\n".join([f"{m['role']}: {m['content']}" for m in historico[-6:]])
 
+    prompt_pedagogico = f"""
+    Você é um assistente pedagógico especialista em matemática. Sua tarefa é analisar uma conversa entre um tutor e um aluno para decidir o próximo passo.
+
+    CONTEXTO ATUAL:
+    - Tópico: "{topico_atual['Objetos do conhecimento']}"
+    - Habilidades esperadas: "{topico_atual['Habilidades']}"
+    - Ano: {topico_atual['Ano']}º
+
+    HISTÓRICO RECENTE DA CONVERSA:
+    {historico_texto}
+
+    POTENCIAIS PRÓXIMOS TÓPICOS:
+    {proximos_topicos_potenciais}
+
+    ANÁLISE:
+    Com base na conversa, o aluno demonstrou compreensão do tópico atual? Ele parece estar pronto para avançar, ou está com dificuldades em um pré-requisito?
+
+    RESPONDA APENAS COM UM OBJETO JSON com as seguintes chaves:
+    - "analise_pedagogica": "Um resumo curto (1 frase) da sua análise."
+    - "acao_sugerida": Escolha uma destas opções: "continuar", "avancar" ou "revisar".
+    - "proximo_topico_sugerido": Se a ação for "avancar", indique qual dos 'POTENCIAIS PRÓXIMOS TÓPICOS' é a melhor sugestão. Caso contrário, deixe nulo.
+    """
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt_pedagogico}],
+            response_format={"type": "json_object"}
+        )
+        dados = json.loads(response.choices[0].message.content)
+        log_to_terminal(f"Análise pedagógica recebida: {dados}")
+        return dados
+    except Exception as e:
+        log_to_terminal(f"Erro na análise pedagógica: {e}")
+        return None
 
 # --- 3. INICIALIZAÇÃO DE OBJETOS GLOBAIS ---
 try:
@@ -177,10 +203,13 @@ elif st.session_state.app_state == "SELECAO_TOPICO":
                         st.session_state.topico_selecionado_idx = idx
                         st.session_state.app_state = "CHAT"
                         st.session_state.initial_action_taken = False
-                        # Mensagem inicial simplificada para uma string simples
                         st.session_state.messages = [
                             {"role": "assistant", "content": f"Ok! Vamos focar em **{df.loc[idx, 'Objetos do conhecimento']}**. O que você gostaria de saber? Me peça uma explicação, exemplos ou exercícios!"}
                         ]
+                        # --- ALTERADO: INICIALIZA O STATUS DE DESEMPENHO ---
+                        st.session_state.desempenho_status = "analisando"
+                        st.session_state.sugestao_pendente = None
+                        st.session_state.analise_feita_para_pergunta = 0
                         st.rerun()
 
 # ESTADO 3: CHAT
@@ -188,68 +217,96 @@ elif st.session_state.app_state == "CHAT":
     if st.button("⬅️ Mudar de Tópico"):
         st.session_state.messages = []
         st.session_state.app_state = "SELECAO_TOPICO"
-        st.session_state.df_com_similaridade = None # Resetar para forçar nova busca se necessário
+        # --- ALTERADO: RESETA O STATUS DE DESEMPENHO ---
+        st.session_state.desempenho_status = None
         st.rerun()
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
-            # Chamada para a função de renderização que agora processa o LaTeX
             renderizar_mensagem(message)
+    
+    # Lógica para exibir sugestão pendente
+    if st.session_state.sugestao_pendente:
+        sugestao = st.session_state.sugestao_pendente
+        with st.container(border=True):
+            st.info("💡 Sugestão do Tutor")
+            st.write(f"{sugestao['analise_pedagogica']} Parece que você está pronto para o próximo passo!")
+            st.write(f"Gostaria de avançar para o tópico **{sugestao['proximo_topico_sugerido']}**?")
+            
+            col1, col2 = st.columns(2)
+            if col1.button("Sim, vamos avançar!", use_container_width=True):
+                # Encontrar o índice do novo tópico
+                novo_topico_nome = sugestao['proximo_topico_sugerido']
+                novo_topico_idx = df[df['Objetos do conhecimento'] == novo_topico_nome].index[0]
+
+                # Atualizar o estado da aplicação para o novo tópico
+                st.session_state.topico_selecionado_idx = novo_topico_idx
+                st.session_state.sugestao_pendente = None
+                st.session_state.initial_action_taken = False
+                st.session_state.analise_feita_para_pergunta = 0
+                st.session_state.desempenho_status = "analisando"
+                st.session_state.messages.append({"role": "assistant", "content": f"Excelente! Vamos começar a explorar **{novo_topico_nome}**. O que gostaria de saber?"})
+                st.rerun()
+                
+            if col2.button("Não, continuar aqui", use_container_width=True):
+                st.session_state.sugestao_pendente = None
+                st.rerun()
     
     prompt_gerado = None
     if not st.session_state.get("initial_action_taken", False):
         st.write("Escolha uma ação:")
         col1, col2, col3 = st.columns(3)
-        if col1.button("Explique o tópico", use_container_width=True):
-            prompt_gerado = "Por favor, me dê uma explicação detalhada sobre este tópico."
-        if col2.button("Me dê um exemplo", use_container_width=True):
-            prompt_gerado = "Pode me dar um exemplo prático sobre isso?"
-        if col3.button("Quero exercícios", use_container_width=True):
-            prompt_gerado = "Gostaria de alguns exercícios para praticar."
-        if prompt_gerado:
-            st.session_state.initial_action_taken = True
-    else:
+        if col1.button("Explique o tópico", use_container_width=True): prompt_gerado = "Por favor, me dê uma explicação detalhada sobre este tópico."
+        if col2.button("Me dê um exemplo", use_container_width=True): prompt_gerado = "Pode me dar um exemplo prático sobre isso?"
+        if col3.button("Quero exercícios", use_container_width=True): prompt_gerado = "Gostaria de alguns exercícios para praticar."
+        if prompt_gerado: st.session_state.initial_action_taken = True
+    elif not st.session_state.sugestao_pendente: # Só mostra o input se não houver sugestão na tela
         prompt_gerado = st.chat_input("Faça outra pergunta ou peça mais exercícios!")
 
     if prompt_gerado:
         st.session_state.messages.append({"role": "user", "content": prompt_gerado})
-        with st.chat_message("user"):
-            st.markdown(prompt_gerado)
+        
+        with st.chat_message("user"): st.markdown(prompt_gerado)
+            
         with st.chat_message("assistant"):
             with st.spinner("Pensando..."):
-                st.session_state.log_messages = []
-                log_to_terminal("--- NOVA QUERY (CHAT) ---")
-                
                 topico_selecionado = df.loc[st.session_state.topico_selecionado_idx]
-                contexto_curricular = topico_selecionado['texto_completo']
-
-                # Prompt do sistema drasticamente simplificado
                 system_prompt = f"""
-                Você é um tutor de matemática amigável e prestativo.
-                Use o CONTEXTO CURRICULAR abaixo para responder a pergunta do aluno.
-                Seja claro e use exemplos simples. Você pode usar formatação Markdown e LaTeX (com delimitadores \\(para inline\\) e \\[para bloco\\]).
-                
-                CONTEXTO CURRICULAR:
-                {contexto_curricular}
+                Você é um tutor de matemática amigável e prestativo. Use o CONTEXTO CURRICULAR abaixo para responder a pergunta do aluno. Seja claro e use exemplos simples. Você pode usar formatação Markdown e LaTeX (com delimitadores \\(para inline\\) e \\[para bloco\\]).
+                CONTEXTO CURRICULAR: {topico_selecionado['texto_completo']}
                 """
-                
                 mensagens_para_api = [{"role": "system", "content": system_prompt}] + st.session_state.messages
                 
-                log_to_terminal("Enviando requisição para API (modo texto)...")
                 try:
-                    # Chamada de API simplificada, sem forçar JSON
-                    response = client.chat.completions.create(
-                        model="gpt-4o-mini", 
-                        messages=mensagens_para_api
-                    )
-                    # A resposta agora é uma string de texto simples
+                    response = client.chat.completions.create(model="gpt-4o-mini", messages=mensagens_para_api)
                     resposta_texto = response.choices[0].message.content
                     st.session_state.messages.append({"role": "assistant", "content": resposta_texto})
-                    log_to_terminal("\n--- RESPOSTA BRUTA DA API (TEXTO) ---")
-                    log_to_terminal(resposta_texto)
                 except Exception as e:
                     st.error(f"Ocorreu um erro com a API da OpenAI: {e}")
-                    log_to_terminal(f"ERRO na API de Chat: {e}")
+        
+        # --- LÓGICA DE ANÁLISE PEDAGÓGICA ---
+        perguntas_do_usuario = [msg for msg in st.session_state.messages if msg['role'] == 'user']
+        gatilho = 3 
+
+        if len(perguntas_do_usuario) > 0 and len(perguntas_do_usuario) % gatilho == 0:
+            if st.session_state.analise_feita_para_pergunta != len(perguntas_do_usuario):
+                sugestao = analisar_progresso_do_topico(
+                    historico=st.session_state.messages,
+                    topico_atual_idx=st.session_state.topico_selecionado_idx,
+                    df_curriculo=df,
+                    client=client
+                )
+                if sugestao:
+                    # --- ALTERADO: ATUALIZA O STATUS DE DESEMPENHO ---
+                    acao = sugestao.get('acao_sugerida')
+                    if acao == 'avancar':
+                        st.session_state.sugestao_pendente = sugestao
+                        st.session_state.desempenho_status = "avancar"
+                    elif acao in ['continuar', 'revisar']:
+                        st.session_state.desempenho_status = "continuar"
+                    
+                    st.session_state.analise_feita_para_pergunta = len(perguntas_do_usuario)
+        
         st.rerun()
 
 # --- 5. SIDEBAR (SEMPRE VISÍVEL) ---
@@ -259,3 +316,14 @@ with st.sidebar:
         log_container = st.container(height=300)
         log_text = "\n".join(st.session_state.log_messages)
         log_container.text(log_text)
+    
+    st.divider() # Adiciona uma linha divisória
+
+    # --- NOVO: LÓGICA PARA EXIBIR O DESEMPENHO ---
+    status = st.session_state.get('desempenho_status')
+    if status == 'analisando':
+        st.warning("Desempenho: Analisando...")
+    elif status == 'continuar':
+        st.error("Desempenho: Continua na lição")
+    elif status == 'avancar':
+        st.success("Desempenho: Pronto para o próximo tópico")
