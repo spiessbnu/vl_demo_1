@@ -9,7 +9,8 @@ import json
 import re
 
 # --- 1. CONFIGURAÇÃO INICIAL E SESSION STATE ---
-st.set_page_config(page_title="Tutor de Matemática", page_icon="🤖", layout="centered")
+# --- ALTERADO: Título da página ---
+st.set_page_config(page_title="Vibe Learning - Teste", page_icon="🤖", layout="centered")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 
 if "app_state" not in st.session_state:
@@ -28,7 +29,6 @@ if "topico_selecionado_idx" not in st.session_state:
     st.session_state.topico_selecionado_idx = None
 if "initial_action_taken" not in st.session_state:
     st.session_state.initial_action_taken = False
-# --- NOVOS ESTADOS PARA SUGESTÃO, DESEMPENHO E MEMÓRIA ---
 if 'sugestao_pendente' not in st.session_state:
     st.session_state.sugestao_pendente = None
 if 'analise_feita_para_pergunta' not in st.session_state:
@@ -102,12 +102,10 @@ def renderizar_mensagem(message):
     texto_processado = re.sub(r'\\\((.*?)\\\)', r'$\1$', texto_processado, flags=re.DOTALL)
     st.markdown(texto_processado, unsafe_allow_html=True)
 
-# --- ALTERADO: Função de análise agora considera os tópicos já superados ---
 def analisar_progresso_do_topico(historico, topico_atual_idx, df_curriculo, client, topicos_superados):
     log_to_terminal("Iniciando análise de progresso pedagógico...")
     topico_atual = df_curriculo.loc[topico_atual_idx]
     
-    # Filtra os tópicos que ainda não foram superados
     df_potenciais = df_curriculo[
         (df_curriculo['Ano'] == topico_atual['Ano']) &
         (df_curriculo['Unidade Temática'] == topico_atual['Unidade Temática']) &
@@ -150,7 +148,6 @@ def analisar_progresso_do_topico(historico, topico_atual_idx, df_curriculo, clie
             response_format={"type": "json_object"}
         )
         dados = json.loads(response.choices[0].message.content)
-        # --- NOVO: Anexa a lista de tópicos relacionados ao resultado ---
         dados['topicos_relacionados'] = proximos_topicos_potenciais_nomes
         log_to_terminal(f"Análise pedagógica recebida: {dados}")
         return dados
@@ -170,7 +167,8 @@ if df is None: st.stop()
 
 
 # --- 4. LÓGICA PRINCIPAL DA APLICAÇÃO (MÁQUINA DE ESTADOS) ---
-st.title("🤖 Tutor Inteligente de Matemática")
+# --- ALTERADO: Título principal ---
+st.title("Vibe Learning - Teste")
 
 # ESTADO 1: COLETA DE INFORMAÇÕES
 if st.session_state.app_state == "COLETA_INFO":
@@ -224,7 +222,6 @@ elif st.session_state.app_state == "SELECAO_TOPICO":
                         st.session_state.desempenho_status = "analisando"
                         st.session_state.sugestao_pendente = None
                         st.session_state.analise_feita_para_pergunta = 0
-                        # --- NOVO: Reseta a memória de tópicos ao iniciar uma nova busca ---
                         st.session_state.topicos_superados = []
                         st.rerun()
 
@@ -240,7 +237,6 @@ elif st.session_state.app_state == "CHAT":
         with st.chat_message(message["role"]):
             renderizar_mensagem(message)
     
-    # --- NOVO: Lógica para mostrar a lista de outros tópicos ---
     if st.session_state.get('mostrando_lista_relacionados', False):
         with st.container(border=True):
             st.markdown("### Outros temas relacionados")
@@ -250,13 +246,11 @@ elif st.session_state.app_state == "CHAT":
             
             for topico_nome in topicos_para_mostrar:
                 if st.button(topico_nome, key=f"outro_{topico_nome}", use_container_width=True):
-                    # Lógica para mudar para o tópico escolhido
-                    st.session_state.topicos_superados.append(st.session_state.topico_selecionado_idx) # Marca o anterior como superado
+                    st.session_state.topicos_superados.append(st.session_state.topico_selecionado_idx)
                     novo_idx = df[df['Objetos do conhecimento'] == topico_nome].index[0]
                     st.session_state.topico_selecionado_idx = novo_idx
                     st.session_state.messages.append({"role": "assistant", "content": f"Perfeito! Vamos estudar **{topico_nome}**. Por onde começamos?"})
                     
-                    # Reseta os estados
                     st.session_state.mostrando_lista_relacionados = False
                     st.session_state.sugestao_pendente = None
                     st.session_state.initial_action_taken = False
@@ -264,7 +258,6 @@ elif st.session_state.app_state == "CHAT":
                     st.session_state.desempenho_status = 'analisando'
                     st.rerun()
 
-    # --- ALTERADO: Lógica para exibir sugestão pendente com novas opções ---
     elif st.session_state.get('sugestao_pendente') and not st.session_state.get('mostrando_lista_relacionados'):
         sugestao = st.session_state.sugestao_pendente
         with st.container(border=True):
@@ -274,14 +267,12 @@ elif st.session_state.app_state == "CHAT":
             
             col1, col2, col3 = st.columns(3)
             if col1.button("Sim, vamos avançar!", use_container_width=True):
-                # --- ALTERADO: Adiciona o tópico atual à lista de superados ---
                 st.session_state.topicos_superados.append(st.session_state.topico_selecionado_idx)
                 novo_topico_nome = sugestao['proximo_topico_sugerido']
                 novo_topico_idx = df[df['Objetos do conhecimento'] == novo_topico_nome].index[0]
                 st.session_state.topico_selecionado_idx = novo_topico_idx
                 st.session_state.messages.append({"role": "assistant", "content": f"Excelente! Vamos começar a explorar **{novo_topico_nome}**. O que gostaria de saber?"})
                 
-                # Reseta os estados
                 st.session_state.sugestao_pendente = None
                 st.session_state.initial_action_taken = False
                 st.session_state.analise_feita_para_pergunta = 0
@@ -292,13 +283,11 @@ elif st.session_state.app_state == "CHAT":
                 st.session_state.sugestao_pendente = None
                 st.rerun()
 
-            # --- NOVO: Botão para ver outros temas ---
             if col3.button("Ver outros temas", use_container_width=True):
                 st.session_state.mostrando_lista_relacionados = True
                 st.rerun()
     
     prompt_gerado = None
-    # Apenas mostra o input do usuário se nenhuma "janela modal" (sugestão ou lista) estiver ativa
     if not st.session_state.sugestao_pendente and not st.session_state.mostrando_lista_relacionados:
         if not st.session_state.get("initial_action_taken", False):
             st.write("Escolha uma ação:")
