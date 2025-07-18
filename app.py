@@ -28,13 +28,17 @@ if "topico_selecionado_idx" not in st.session_state:
     st.session_state.topico_selecionado_idx = None
 if "initial_action_taken" not in st.session_state:
     st.session_state.initial_action_taken = False
-# --- NOVOS ESTADOS PARA SUGESTÃO E DESEMPENHO ---
+# --- NOVOS ESTADOS PARA SUGESTÃO, DESEMPENHO E MEMÓRIA ---
 if 'sugestao_pendente' not in st.session_state:
     st.session_state.sugestao_pendente = None
 if 'analise_feita_para_pergunta' not in st.session_state:
     st.session_state.analise_feita_para_pergunta = 0
 if "desempenho_status" not in st.session_state:
-    st.session_state.desempenho_status = None # 'analisando', 'continuar', 'avancar'
+    st.session_state.desempenho_status = None
+if "topicos_superados" not in st.session_state:
+    st.session_state.topicos_superados = []
+if "mostrando_lista_relacionados" not in st.session_state:
+    st.session_state.mostrando_lista_relacionados = False
 
 # --- 2. DEFINIÇÃO DE TODAS AS FUNÇÕES AUXILIARES ---
 def log_to_terminal(message):
@@ -98,14 +102,22 @@ def renderizar_mensagem(message):
     texto_processado = re.sub(r'\\\((.*?)\\\)', r'$\1$', texto_processado, flags=re.DOTALL)
     st.markdown(texto_processado, unsafe_allow_html=True)
 
-def analisar_progresso_do_topico(historico, topico_atual_idx, df_curriculo, client):
+# --- ALTERADO: Função de análise agora considera os tópicos já superados ---
+def analisar_progresso_do_topico(historico, topico_atual_idx, df_curriculo, client, topicos_superados):
     log_to_terminal("Iniciando análise de progresso pedagógico...")
     topico_atual = df_curriculo.loc[topico_atual_idx]
-    proximos_topicos_potenciais = df_curriculo[
+    
+    # Filtra os tópicos que ainda não foram superados
+    df_potenciais = df_curriculo[
         (df_curriculo['Ano'] == topico_atual['Ano']) &
         (df_curriculo['Unidade Temática'] == topico_atual['Unidade Temática']) &
-        (df_curriculo.index != topico_atual_idx)
-    ]['Objetos do conhecimento'].tolist()
+        (df_curriculo.index != topico_atual_idx) &
+        (~df_curriculo.index.isin(topicos_superados))
+    ]
+    proximos_topicos_potenciais_nomes = df_potenciais['Objetos do conhecimento'].tolist()
+
+    topicos_superados_nomes = df_curriculo.loc[topicos_superados]['Objetos do conhecimento'].tolist()
+    
     historico_texto = "\n".join([f"{m['role']}: {m['content']}" for m in historico[-6:]])
 
     prompt_pedagogico = f"""
@@ -115,12 +127,13 @@ def analisar_progresso_do_topico(historico, topico_atual_idx, df_curriculo, clie
     - Tópico: "{topico_atual['Objetos do conhecimento']}"
     - Habilidades esperadas: "{topico_atual['Habilidades']}"
     - Ano: {topico_atual['Ano']}º
+    - Tópicos já superados nesta sessão: {topicos_superados_nomes}
 
     HISTÓRICO RECENTE DA CONVERSA:
     {historico_texto}
 
-    POTENCIAIS PRÓXIMOS TÓPICOS:
-    {proximos_topicos_potenciais}
+    POTENCIAIS PRÓXIMOS TÓPICOS (NÃO SUGIRA OS JÁ SUPERADOS):
+    {proximos_topicos_potenciais_nomes}
 
     ANÁLISE:
     Com base na conversa, o aluno demonstrou compreensão do tópico atual? Ele parece estar pronto para avançar, ou está com dificuldades em um pré-requisito?
@@ -137,6 +150,8 @@ def analisar_progresso_do_topico(historico, topico_atual_idx, df_curriculo, clie
             response_format={"type": "json_object"}
         )
         dados = json.loads(response.choices[0].message.content)
+        # --- NOVO: Anexa a lista de tópicos relacionados ao resultado ---
+        dados['topicos_relacionados'] = proximos_topicos_potenciais_nomes
         log_to_terminal(f"Análise pedagógica recebida: {dados}")
         return dados
     except Exception as e:
@@ -204,12 +219,13 @@ elif st.session_state.app_state == "SELECAO_TOPICO":
                         st.session_state.app_state = "CHAT"
                         st.session_state.initial_action_taken = False
                         st.session_state.messages = [
-                            {"role": "assistant", "content": f"Ok! Vamos focar em **{df.loc[idx, 'Objetos do conhecimento']}**. O que você gostaria de saber? Me peça uma explicação, exemplos ou exercícios!"}
+                            {"role": "assistant", "content": f"Ok, {st.session_state.aluno_nome}! Vamos focar em **{df.loc[idx, 'Objetos do conhecimento']}**. O que você gostaria de saber? Me peça uma explicação, exemplos ou exercícios!"}
                         ]
-                        # --- ALTERADO: INICIALIZA O STATUS DE DESEMPENHO ---
                         st.session_state.desempenho_status = "analisando"
                         st.session_state.sugestao_pendente = None
                         st.session_state.analise_feita_para_pergunta = 0
+                        # --- NOVO: Reseta a memória de tópicos ao iniciar uma nova busca ---
+                        st.session_state.topicos_superados = []
                         st.rerun()
 
 # ESTADO 3: CHAT
@@ -217,7 +233,6 @@ elif st.session_state.app_state == "CHAT":
     if st.button("⬅️ Mudar de Tópico"):
         st.session_state.messages = []
         st.session_state.app_state = "SELECAO_TOPICO"
-        # --- ALTERADO: RESETA O STATUS DE DESEMPENHO ---
         st.session_state.desempenho_status = None
         st.rerun()
 
@@ -225,58 +240,84 @@ elif st.session_state.app_state == "CHAT":
         with st.chat_message(message["role"]):
             renderizar_mensagem(message)
     
-    # Lógica para exibir sugestão pendente
-    if st.session_state.sugestao_pendente:
+    # --- NOVO: Lógica para mostrar a lista de outros tópicos ---
+    if st.session_state.get('mostrando_lista_relacionados', False):
+        with st.container(border=True):
+            st.markdown("### Outros temas relacionados")
+            st.write("Qual destes você gostaria de explorar agora?")
+            
+            topicos_para_mostrar = st.session_state.sugestao_pendente.get('topicos_relacionados', [])
+            
+            for topico_nome in topicos_para_mostrar:
+                if st.button(topico_nome, key=f"outro_{topico_nome}", use_container_width=True):
+                    # Lógica para mudar para o tópico escolhido
+                    st.session_state.topicos_superados.append(st.session_state.topico_selecionado_idx) # Marca o anterior como superado
+                    novo_idx = df[df['Objetos do conhecimento'] == topico_nome].index[0]
+                    st.session_state.topico_selecionado_idx = novo_idx
+                    st.session_state.messages.append({"role": "assistant", "content": f"Perfeito! Vamos estudar **{topico_nome}**. Por onde começamos?"})
+                    
+                    # Reseta os estados
+                    st.session_state.mostrando_lista_relacionados = False
+                    st.session_state.sugestao_pendente = None
+                    st.session_state.initial_action_taken = False
+                    st.session_state.analise_feita_para_pergunta = 0
+                    st.session_state.desempenho_status = 'analisando'
+                    st.rerun()
+
+    # --- ALTERADO: Lógica para exibir sugestão pendente com novas opções ---
+    elif st.session_state.get('sugestao_pendente') and not st.session_state.get('mostrando_lista_relacionados'):
         sugestao = st.session_state.sugestao_pendente
         with st.container(border=True):
-            st.info("💡 Sugestão do Tutor")
-            st.write(f"{sugestao['analise_pedagogica']} Parece que você está pronto para o próximo passo!")
-            st.write(f"Gostaria de avançar para o tópico **{sugestao['proximo_topico_sugerido']}**?")
+            st.markdown(f"💡 **Uma sugestão para você, {st.session_state.aluno_nome}!**")
+            st.write(f"Notei que você está indo muito bem! {sugestao['analise_pedagogica']}")
+            st.write(f"Você se sente à vontade para avançarmos para o tópico **{sugestao['proximo_topico_sugerido']}**?")
             
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             if col1.button("Sim, vamos avançar!", use_container_width=True):
-                # Encontrar o índice do novo tópico
+                # --- ALTERADO: Adiciona o tópico atual à lista de superados ---
+                st.session_state.topicos_superados.append(st.session_state.topico_selecionado_idx)
                 novo_topico_nome = sugestao['proximo_topico_sugerido']
                 novo_topico_idx = df[df['Objetos do conhecimento'] == novo_topico_nome].index[0]
-
-                # Atualizar o estado da aplicação para o novo tópico
                 st.session_state.topico_selecionado_idx = novo_topico_idx
+                st.session_state.messages.append({"role": "assistant", "content": f"Excelente! Vamos começar a explorar **{novo_topico_nome}**. O que gostaria de saber?"})
+                
+                # Reseta os estados
                 st.session_state.sugestao_pendente = None
                 st.session_state.initial_action_taken = False
                 st.session_state.analise_feita_para_pergunta = 0
-                st.session_state.desempenho_status = "analisando"
-                st.session_state.messages.append({"role": "assistant", "content": f"Excelente! Vamos começar a explorar **{novo_topico_nome}**. O que gostaria de saber?"})
+                st.session_state.desempenho_status = 'analisando'
                 st.rerun()
                 
             if col2.button("Não, continuar aqui", use_container_width=True):
                 st.session_state.sugestao_pendente = None
                 st.rerun()
+
+            # --- NOVO: Botão para ver outros temas ---
+            if col3.button("Ver outros temas", use_container_width=True):
+                st.session_state.mostrando_lista_relacionados = True
+                st.rerun()
     
     prompt_gerado = None
-    if not st.session_state.get("initial_action_taken", False):
-        st.write("Escolha uma ação:")
-        col1, col2, col3 = st.columns(3)
-        if col1.button("Explique o tópico", use_container_width=True): prompt_gerado = "Por favor, me dê uma explicação detalhada sobre este tópico."
-        if col2.button("Me dê um exemplo", use_container_width=True): prompt_gerado = "Pode me dar um exemplo prático sobre isso?"
-        if col3.button("Quero exercícios", use_container_width=True): prompt_gerado = "Gostaria de alguns exercícios para praticar."
-        if prompt_gerado: st.session_state.initial_action_taken = True
-    elif not st.session_state.sugestao_pendente: # Só mostra o input se não houver sugestão na tela
-        prompt_gerado = st.chat_input("Faça outra pergunta ou peça mais exercícios!")
+    # Apenas mostra o input do usuário se nenhuma "janela modal" (sugestão ou lista) estiver ativa
+    if not st.session_state.sugestao_pendente and not st.session_state.mostrando_lista_relacionados:
+        if not st.session_state.get("initial_action_taken", False):
+            st.write("Escolha uma ação:")
+            col1, col2, col3 = st.columns(3)
+            if col1.button("Explique o tópico", use_container_width=True): prompt_gerado = "Por favor, me dê uma explicação detalhada sobre este tópico."
+            if col2.button("Me dê um exemplo", use_container_width=True): prompt_gerado = "Pode me dar um exemplo prático sobre isso?"
+            if col3.button("Quero exercícios", use_container_width=True): prompt_gerado = "Gostaria de alguns exercícios para praticar."
+            if prompt_gerado: st.session_state.initial_action_taken = True
+        else:
+            prompt_gerado = st.chat_input("Faça outra pergunta ou peça mais exercícios!")
 
     if prompt_gerado:
         st.session_state.messages.append({"role": "user", "content": prompt_gerado})
-        
         with st.chat_message("user"): st.markdown(prompt_gerado)
-            
         with st.chat_message("assistant"):
             with st.spinner("Pensando..."):
                 topico_selecionado = df.loc[st.session_state.topico_selecionado_idx]
-                system_prompt = f"""
-                Você é um tutor de matemática amigável e prestativo. Use o CONTEXTO CURRICULAR abaixo para responder a pergunta do aluno. Seja claro e use exemplos simples. Você pode usar formatação Markdown e LaTeX (com delimitadores \\(para inline\\) e \\[para bloco\\]).
-                CONTEXTO CURRICULAR: {topico_selecionado['texto_completo']}
-                """
+                system_prompt = f"Você é um tutor de matemática amigável e prestativo. Use o CONTEXTO CURRICULAR abaixo para responder a pergunta do aluno. Seja claro e use exemplos simples. Você pode usar formatação Markdown e LaTeX (com delimitadores \\(para inline\\) e \\[para bloco\\]).\n\nCONTEXTO CURRICULAR:\n{topico_selecionado['texto_completo']}"
                 mensagens_para_api = [{"role": "system", "content": system_prompt}] + st.session_state.messages
-                
                 try:
                     response = client.chat.completions.create(model="gpt-4o-mini", messages=mensagens_para_api)
                     resposta_texto = response.choices[0].message.content
@@ -284,29 +325,25 @@ elif st.session_state.app_state == "CHAT":
                 except Exception as e:
                     st.error(f"Ocorreu um erro com a API da OpenAI: {e}")
         
-        # --- LÓGICA DE ANÁLISE PEDAGÓGICA ---
         perguntas_do_usuario = [msg for msg in st.session_state.messages if msg['role'] == 'user']
         gatilho = 3 
-
         if len(perguntas_do_usuario) > 0 and len(perguntas_do_usuario) % gatilho == 0:
             if st.session_state.analise_feita_para_pergunta != len(perguntas_do_usuario):
                 sugestao = analisar_progresso_do_topico(
                     historico=st.session_state.messages,
                     topico_atual_idx=st.session_state.topico_selecionado_idx,
                     df_curriculo=df,
-                    client=client
+                    client=client,
+                    topicos_superados=st.session_state.topicos_superados
                 )
                 if sugestao:
-                    # --- ALTERADO: ATUALIZA O STATUS DE DESEMPENHO ---
                     acao = sugestao.get('acao_sugerida')
-                    if acao == 'avancar':
+                    if acao == 'avancar' and sugestao.get('proximo_topico_sugerido'):
                         st.session_state.sugestao_pendente = sugestao
                         st.session_state.desempenho_status = "avancar"
                     elif acao in ['continuar', 'revisar']:
                         st.session_state.desempenho_status = "continuar"
-                    
                     st.session_state.analise_feita_para_pergunta = len(perguntas_do_usuario)
-        
         st.rerun()
 
 # --- 5. SIDEBAR (SEMPRE VISÍVEL) ---
@@ -317,9 +354,8 @@ with st.sidebar:
         log_text = "\n".join(st.session_state.log_messages)
         log_container.text(log_text)
     
-    st.divider() # Adiciona uma linha divisória
-
-    # --- NOVO: LÓGICA PARA EXIBIR O DESEMPENHO ---
+    st.divider()
+    
     status = st.session_state.get('desempenho_status')
     if status == 'analisando':
         st.warning("Desempenho: Analisando...")
